@@ -223,8 +223,10 @@ func (req queryRequest) Do(ctx context.Context) (*sql.Rows, int64, io.Closer, er
 	}
 	defer conn.Close()
 
+	req.Query = strings.TrimSpace(req.Query)
+	isSelect := updSecret == "" || len(req.Query) >= 3 && strings.EqualFold(req.Query[:3], "SEL")
 	Log("msg", "BEGIN")
-	tx, err := conn.Begin()
+	tx, err := conn.BeginTx(ctx, &sql.TxOptions{ReadOnly: isSelect})
 	if err != nil {
 		Log("BEGIN", err)
 		return nil, 0, nil, fmt.Errorf("begin: %w", err)
@@ -247,7 +249,7 @@ func (req queryRequest) Do(ctx context.Context) (*sql.Rows, int64, io.Closer, er
 		paramsS[i] = interface{}(s)
 	}
 
-	if strings.ToUpper(req.Query[:3]) == "UPD" {
+	if !isSelect {
 		if updSecret == "" {
 			C()
 			return nil, 0, nil, fmt.Errorf("%w: update not allowed (no secret given)", ErrAccessDenied)
@@ -285,7 +287,7 @@ func (req queryRequest) Do(ctx context.Context) (*sql.Rows, int64, io.Closer, er
 		}
 
 		Log("msg", "executing", "update", req.Query, "params", req.Params)
-		result, execErr := stmt.Exec(paramsS...)
+		result, execErr := stmt.ExecContext(ctx, paramsS...)
 		if execErr != nil {
 			C()
 			return nil, 0, nil, fmt.Errorf("update: %w", execErr)
@@ -299,7 +301,7 @@ func (req queryRequest) Do(ctx context.Context) (*sql.Rows, int64, io.Closer, er
 	}
 
 	Log("msg", "executing", "query", req.Query, "params", req.Params)
-	rows, err := stmt.Query(paramsS...)
+	rows, err := stmt.QueryContext(ctx, paramsS...)
 	if err != nil {
 		err = fmt.Errorf("%s: %w", req.Query, err)
 	}
