@@ -17,6 +17,7 @@ import (
 
 	"github.com/dgrijalva/jwt-go"
 	"github.com/tgulacsi/go/text"
+	"github.com/UNO-SOFT/wpsql/client"
 	"github.com/timewasted/go-accept-headers"
 )
 
@@ -272,7 +273,7 @@ func (req queryRequest) Do(ctx context.Context) (*sql.Rows, int64, io.Closer, er
 					return nil, fmt.Errorf("update given (%q) is not the same as signed (%q)",
 						req.Query, mc["update"])
 				}
-				if hs := hashStrings(req.Params); mc["params"] != hs && mc["params"] != strings.Join(req.Params, ",") {
+				if hs := client.HashStrings(req.Params); mc["params"] != hs && mc["params"] != strings.Join(req.Params, ",") {
 					return nil, fmt.Errorf("update params given (%q) is not the same as signed (%q)",
 						hs, mc["params"])
 				}

@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: APL-2.0
 
-package main
+package client
 
 import (
 	"context"
@@ -23,11 +23,14 @@ import (
 
 type Client struct {
 	URL, DB, Secret string
+	Log func(...interface{}) error
 	*http.Client
 }
 
 func (m Client) Query(ctx context.Context, qry string, params ...string) ([][]string, error) {
-	logger.Log("msg", "Query", "db", m.DB, "q", qry, "params", params)
+	if m.Log != nil {
+	m.Log("msg", "Query", "db", m.DB, "q", qry, "params", params)
+}
 	values := url.Values(make(map[string][]string, 4))
 	values.Set("_head", "0")
 	values.Set("_db", m.DB)
@@ -49,7 +52,7 @@ func (m Client) Query(ctx context.Context, qry string, params ...string) ([][]st
 	return records, err
 }
 
-func hashStrings(params []string) string {
+func HashStrings(params []string) string {
 	hsh := sha512.New()
 	_ = json.NewEncoder(hsh).Encode(params)
 	var a [sha512.Size]byte
@@ -57,18 +60,22 @@ func hashStrings(params []string) string {
 }
 
 func (m Client) Exec(ctx context.Context, qry string, params ...string) error {
-	logger.Log("msg", "Exec", "db", m.DB, "qry", qry, "params", params)
+	if m.Log != nil {
+		m.Log("msg", "Exec", "db", m.DB, "qry", qry, "params", params)
+	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS512,
 		jwt.MapClaims(map[string]interface{}{
 			"update": qry,
-			"params": hashStrings(params),
+			"params": HashStrings(params),
 			"exp":    time.Now().Add(time.Minute * 1).Unix(),
 		}))
 	// Set some claims
 	// Sign and get the complete encoded token as a string
 	tokenString, err := token.SignedString([]byte(m.Secret))
 	if err != nil {
-		logger.Log("msg", "SignedString", "secret", len(m.Secret), "error", err)
+		if m.Log != nil {
+			m.Log("msg", "SignedString", "secret", len(m.Secret), "error", err)
+		}
 		return err
 	}
 	values := url.Values(map[string][]string{
@@ -77,7 +84,9 @@ func (m Client) Exec(ctx context.Context, qry string, params ...string) error {
 		"_jwt":   {tokenString},
 		"_param": params,
 	})
-	logger.Log("msg", "Exec", "values", values)
+	if m.Log != nil {
+		m.Log("msg", "Exec", "values", values)
+	}
 	resp, err := m.post(ctx, values)
 	if err != nil {
 		return err
@@ -103,7 +112,9 @@ func (m Client) post(ctx context.Context, values url.Values) (*http.Response, er
 	}
 	resp, err := cl.Do(req)
 	if err != nil {
-		logger.Log("msg", "PostForm", "error", err)
+		if m.Log != nil {
+			m.Log("msg", "PostForm", "error", err)
+		}
 		if req, err = http.NewRequestWithContext(ctx, "GET", m.URL+"?"+vs, nil); err != nil {
 			return nil, err
 		}

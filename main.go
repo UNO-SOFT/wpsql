@@ -17,10 +17,13 @@ import (
 	"sync"
 
 	"github.com/UNO-SOFT/ulog"
+	"github.com/UNO-SOFT/wpsql/client"
+
 	"github.com/go-kit/kit/log"
 	"github.com/peterbourgon/ff/v3/ffcli"
-	"github.com/tgulacsi/go/globalctx"
 	"gopkg.in/go-on/mannersagain.v1"
+
+	"github.com/tgulacsi/go/globalctx"
 
 	_ "github.com/lib/pq"
 )
@@ -68,7 +71,7 @@ func Main() error {
 		},
 	}
 
-	var m Client
+	var m client.Client
 	fs = flag.NewFlagSet("client", flag.ContinueOnError)
 	fs.StringVar(&m.URL, "server", "http://192.168.1.1:45432", "address of the wpsql server")
 	fs.StringVar(&m.DB, "db", "", "database")
