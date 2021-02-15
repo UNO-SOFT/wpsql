@@ -15,9 +15,9 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/UNO-SOFT/wpsql/client"
 	"github.com/dgrijalva/jwt-go"
 	"github.com/tgulacsi/go/text"
-	"github.com/UNO-SOFT/wpsql/client"
 	"github.com/timewasted/go-accept-headers"
 )
 
@@ -372,9 +372,9 @@ func (rp requestConfig) writeRows(w io.Writer, rows *sql.Rows, fn string) error 
 }
 
 type requestConfig struct {
+	Charset   string
 	Separator rune
 	Head      bool
-	Charset   string
 }
 
 func getReqConfig(r *http.Request) (requestConfig, error) {

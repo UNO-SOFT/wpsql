@@ -22,15 +22,15 @@ import (
 )
 
 type Client struct {
-	URL, DB, Secret string
 	Log func(...interface{}) error
 	*http.Client
+	URL, DB, Secret string
 }
 
 func (m Client) Query(ctx context.Context, qry string, params ...string) ([][]string, error) {
 	if m.Log != nil {
-	m.Log("msg", "Query", "db", m.DB, "q", qry, "params", params)
-}
+		m.Log("msg", "Query", "db", m.DB, "q", qry, "params", params)
+	}
 	values := url.Values(make(map[string][]string, 4))
 	values.Set("_head", "0")
 	values.Set("_db", m.DB)
