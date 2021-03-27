@@ -220,15 +220,30 @@ func (srv server) queryHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (req queryRequest) Do(ctx context.Context) (pgx.Rows, int64, io.Closer, error) {
+func (req queryRequest) Do(ctx context.Context) (rows pgx.Rows, affected int64, C io.Closer, err error) {
 	Log := logger.Log
 	Log("connecting", req.DB)
-	conn, err := connect(ctx, req.DB)
-	if err != nil {
-		Log("msg", "connect", "db", req.DB, "error", err)
-		return nil, 0, nil, fmt.Errorf("connecting to %s: %w", req.DB, err)
+	conn, connErr := connect(ctx, req.DB)
+	if connErr != nil {
+		Log("msg", "connect", "db", req.DB, "error", connErr)
+		return nil, 0, nil, fmt.Errorf("connecting to %s: %w", req.DB, connErr)
 	}
-	C := closerFunc(func() error { conn.Release(); return nil; })
+	tbc := append(make([]func() error, 0, 4), func() error { conn.Release(); return nil })
+	C = closerFunc(func() error {
+		var firstErr error
+		for i := len(tbc) - 1; i >= 0; i-- {
+			if err := tbc[i](); err != nil && firstErr == nil {
+				firstErr = err
+			}
+		}
+		return firstErr
+	})
+
+	defer func() {
+		if err != nil {
+			C.Close()
+		}
+	}()
 
 	req.Query = strings.TrimSpace(req.Query)
 	accessMode := pgx.ReadOnly
@@ -238,11 +253,10 @@ func (req queryRequest) Do(ctx context.Context) (pgx.Rows, int64, io.Closer, err
 	Log("msg", "BEGIN")
 	tx, err := conn.BeginTx(ctx, pgx.TxOptions{AccessMode: accessMode})
 	if err != nil {
-		C()
 		Log("BEGIN", err)
 		return nil, 0, nil, fmt.Errorf("begin: %w", err)
 	}
-	C = closerFunc(func() error { conn.Release(); return tx.Rollback(context.Background()) })
+	tbc = append(tbc, func() error { return tx.Rollback(context.Background()) })
 
 	paramsS := make([]interface{}, len(req.Params))
 	for i, s := range req.Params {
@@ -251,12 +265,10 @@ func (req queryRequest) Do(ctx context.Context) (pgx.Rows, int64, io.Closer, err
 
 	if accessMode != pgx.ReadOnly {
 		if updSecret == "" {
-			C()
 			return nil, 0, nil, fmt.Errorf("%w: update not allowed (no secret given)", ErrAccessDenied)
 		}
 		given := req.JWT
 		if given == "" {
-			C()
 			return nil, 0, nil, errors.New("update needs jwt token")
 		}
 
@@ -279,21 +291,17 @@ func (req queryRequest) Do(ctx context.Context) (pgx.Rows, int64, io.Closer, err
 				return []byte(updSecret), nil
 			})
 		if parseErr != nil {
-			C()
 			return nil, 0, nil, fmt.Errorf("%w: parse jwt token %q: %w", ErrBadRequest, given, parseErr)
 		} else if !token.Valid {
-			C()
 			return nil, 0, nil, fmt.Errorf("update token mismatch: %w", ErrAccessDenied)
 		}
 
 		Log("msg", "executing", "update", req.Query, "params", req.Params)
 		result, execErr := conn.Exec(ctx, req.Query, paramsS...)
 		if execErr != nil {
-			C()
 			return nil, 0, nil, fmt.Errorf("update: %w", execErr)
 		}
 		if err = tx.Commit(ctx); err != nil {
-			C()
 			return nil, 0, nil, fmt.Errorf("commit: %w", err)
 		}
 		aff := result.RowsAffected()
@@ -301,8 +309,7 @@ func (req queryRequest) Do(ctx context.Context) (pgx.Rows, int64, io.Closer, err
 	}
 
 	Log("msg", "executing", "query", req.Query, "params", req.Params)
-	rows, err := conn.Query(ctx, req.Query, paramsS...)
-	if err != nil {
+	if rows, err = conn.Query(ctx, req.Query, paramsS...); err != nil {
 		err = fmt.Errorf("%s: %w", req.Query, err)
 	}
 	return rows, 0, C, err
@@ -354,6 +361,10 @@ func (rp requestConfig) writeRows(w io.Writer, rows pgx.Rows, fn string) error {
 		}
 		for i, pv := range vals {
 			v := *(pv.(*interface{}))
+			if v == nil {
+				strs[i] = ""
+				continue
+			}
 			switch x := v.(type) {
 			case []byte:
 				strs[i] = string(x)
