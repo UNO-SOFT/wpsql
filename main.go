@@ -6,7 +6,6 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"encoding/csv"
 	"flag"
 	"io"
@@ -14,7 +13,6 @@ import (
 	"net/url"
 	"os"
 	"strings"
-	"sync"
 
 	"github.com/UNO-SOFT/ulog"
 	"github.com/UNO-SOFT/wpsql/client"
@@ -24,16 +22,11 @@ import (
 	"gopkg.in/go-on/mannersagain.v1"
 
 	"github.com/tgulacsi/go/globalctx"
-
-	_ "github.com/lib/pq"
 )
 
 var logger = log.Logger(ulog.New())
 
 var (
-	dbs    = make(map[string]*sql.DB, 8)
-	dbsMtx sync.RWMutex
-
 	dsnTemplate string
 	updSecret   string
 )
@@ -75,8 +68,12 @@ func Main() error {
 	fs = flag.NewFlagSet("client", flag.ContinueOnError)
 	fs.StringVar(&m.URL, "server", "http://192.168.1.1:45432", "address of the wpsql server")
 	fs.StringVar(&m.DB, "db", "", "database")
+	flagClientVerbose := fs.Bool("v", false, "verbose logging")
 	clientCmd := ffcli.Command{Name: "client", FlagSet: fs,
 		Exec: func(ctx context.Context, args []string) error {
+			if *flagClientVerbose {
+				m.Log = logger.Log
+			}
 			qry, params := strings.TrimSpace(args[0]), args[1:]
 			m.Secret = os.Getenv(pqUpdSecretEnv)
 			if m.Secret != "" && len(qry) > 2 && strings.EqualFold(qry[:3], "UPD") {

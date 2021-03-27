@@ -9,6 +9,7 @@ import (
 	"crypto/sha512"
 	"encoding/base64"
 	"encoding/csv"
+"strconv"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -28,9 +29,7 @@ type Client struct {
 }
 
 func (m Client) Query(ctx context.Context, qry string, params ...string) ([][]string, error) {
-	if m.Log != nil {
-		m.Log("msg", "Query", "db", m.DB, "q", qry, "params", params)
-	}
+	qry, params = m.prepareQry(qry, params)
 	values := url.Values(make(map[string][]string, 4))
 	values.Set("_head", "0")
 	values.Set("_db", m.DB)
@@ -42,7 +41,9 @@ func (m Client) Query(ctx context.Context, qry string, params ...string) ([][]st
 		return nil, err
 	}
 
+if resp.Body != nil {
 	defer resp.Body.Close()
+}
 
 	var buf strings.Builder
 	records, err := csv.NewReader(io.TeeReader(resp.Body, &buf)).ReadAll()
@@ -60,9 +61,7 @@ func HashStrings(params []string) string {
 }
 
 func (m Client) Exec(ctx context.Context, qry string, params ...string) error {
-	if m.Log != nil {
-		m.Log("msg", "Exec", "db", m.DB, "qry", qry, "params", params)
-	}
+	qry, params = m.prepareQry(qry, params)
 	token := jwt.NewWithClaims(jwt.SigningMethodHS512,
 		jwt.MapClaims(map[string]interface{}{
 			"update": qry,
@@ -84,9 +83,6 @@ func (m Client) Exec(ctx context.Context, qry string, params ...string) error {
 		"_jwt":   {tokenString},
 		"_param": params,
 	})
-	if m.Log != nil {
-		m.Log("msg", "Exec", "values", values)
-	}
 	resp, err := m.post(ctx, values)
 	if err != nil {
 		return err
@@ -100,6 +96,9 @@ func (m Client) Exec(ctx context.Context, qry string, params ...string) error {
 }
 
 func (m Client) post(ctx context.Context, values url.Values) (*http.Response, error) {
+	if m.Log != nil {
+		m.Log("msg", "post", "values", values)
+	}
 	vs := values.Encode()
 	req, err := http.NewRequestWithContext(ctx, "POST", m.URL, strings.NewReader(vs))
 	if err != nil {
@@ -124,6 +123,33 @@ func (m Client) post(ctx context.Context, values url.Values) (*http.Response, er
 		return nil, fmt.Errorf("%s?%s: %w", m.URL, values.Encode(), err)
 	}
 	return resp, err
+}
+
+func (m Client) prepareQry(qry string, params []string) (string, []string) {
+	if len(params) == 0 || !strings.Contains(qry, ":'") {
+		return qry, params
+	}
+	flattened := make([]string, 0, strings.Count(qry, "$"))
+	var idx int
+	for _, p := range params {
+		j := strings.IndexByte(p, '=')
+		if  j < 0 {
+			continue
+		}
+		k, v := ":'" + p[:j] + "'", p[j+1:]
+		for {
+			if j = strings.Index(qry, k); j < 0 {
+				break
+			}
+			idx++
+			qry = qry[:j] + "$"+strconv.Itoa(idx) +  qry[j+len(k):]
+			flattened = append(flattened, v)
+		}
+	}
+	if m.Log != nil {
+		m.Log("qry", qry)
+	}
+	return qry, flattened
 }
 
 // vim: set fileencoding=utf-8:

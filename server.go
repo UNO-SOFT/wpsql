@@ -6,7 +6,6 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"encoding/base64"
 	"encoding/csv"
 	"errors"
@@ -14,11 +13,16 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/UNO-SOFT/wpsql/client"
 	"github.com/dgrijalva/jwt-go"
 	"github.com/tgulacsi/go/text"
 	"github.com/timewasted/go-accept-headers"
+
+	"github.com/jackc/pgx/v4"
+	"github.com/jackc/pgx/v4/log/kitlogadapter"
+	"github.com/jackc/pgx/v4/pgxpool"
 )
 
 func (srv server) restHandler(w http.ResponseWriter, r *http.Request) {
@@ -41,12 +45,14 @@ func (srv server) restHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	db := path[0]
-	conn, err := connect(db)
+	ctx := r.Context()
+	conn, err := connect(ctx, db)
 	if err != nil {
 		http.Error(w, "bad db "+db, http.StatusNotFound)
 		return
 	}
-	ctx := r.Context()
+	defer conn.Release()
+
 	var n int64
 	table := "mantis_" + path[1] + "_table"
 	cols, col := "*", "id"
@@ -55,7 +61,7 @@ func (srv server) restHandler(w http.ResponseWriter, r *http.Request) {
 		cols = path[3]
 	}
 	qry := "SELECT COUNT(0) FROM information_schema.columns WHERE table_name = $1 AND column_name = $2"
-	if err = conn.QueryRowContext(ctx, qry, table, col).Scan(&n); err != nil {
+	if err = conn.QueryRow(ctx, qry, table, col).Scan(&n); err != nil {
 		err = fmt.Errorf("%s: %w", qry, err)
 		Log("select", qry, "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -66,7 +72,7 @@ func (srv server) restHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	qry = fmt.Sprintf("SELECT "+cols+"  FROM %q WHERE id = $1", table) //nolint:gas
-	rows, err := conn.QueryContext(ctx, qry, path[2])
+	rows, err := conn.Query(ctx, qry, path[2])
 	if err != nil {
 		err = fmt.Errorf("%s: %w", qry, err)
 		Log("select", qry, "error", err)
@@ -214,43 +220,36 @@ func (srv server) queryHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (req queryRequest) Do(ctx context.Context) (*sql.Rows, int64, io.Closer, error) {
+func (req queryRequest) Do(ctx context.Context) (pgx.Rows, int64, io.Closer, error) {
 	Log := logger.Log
 	Log("connecting", req.DB)
-	conn, err := connect(req.DB)
+	conn, err := connect(ctx, req.DB)
 	if err != nil {
 		Log("msg", "connect", "db", req.DB, "error", err)
 		return nil, 0, nil, fmt.Errorf("connecting to %s: %w", req.DB, err)
 	}
-	defer conn.Close()
+	C := closerFunc(func() error { conn.Release(); return nil; })
 
 	req.Query = strings.TrimSpace(req.Query)
-	isSelect := updSecret == "" || len(req.Query) >= 3 && strings.EqualFold(req.Query[:3], "SEL")
+	accessMode := pgx.ReadOnly
+	if updSecret != "" && len(req.Query) >= 3 && !strings.EqualFold(req.Query[:3], "SEL") {
+		accessMode = pgx.ReadWrite
+	}
 	Log("msg", "BEGIN")
-	tx, err := conn.BeginTx(ctx, &sql.TxOptions{ReadOnly: isSelect})
+	tx, err := conn.BeginTx(ctx, pgx.TxOptions{AccessMode: accessMode})
 	if err != nil {
+		C()
 		Log("BEGIN", err)
 		return nil, 0, nil, fmt.Errorf("begin: %w", err)
 	}
-	C := closerFunc(func() error { return tx.Rollback() })
-
-	Log("msg", "prepare", "query", req.Query)
-	stmt, err := tx.Prepare(req.Query)
-	if err != nil {
-		C()
-		return nil, 0, nil, fmt.Errorf("prepare: %w", err)
-	}
-	{
-		oldC := C
-		C = closerFunc(func() error { err := stmt.Close(); oldC(); return err })
-	}
+	C = closerFunc(func() error { conn.Release(); return tx.Rollback(context.Background()) })
 
 	paramsS := make([]interface{}, len(req.Params))
 	for i, s := range req.Params {
 		paramsS[i] = interface{}(s)
 	}
 
-	if !isSelect {
+	if accessMode != pgx.ReadOnly {
 		if updSecret == "" {
 			C()
 			return nil, 0, nil, fmt.Errorf("%w: update not allowed (no secret given)", ErrAccessDenied)
@@ -288,37 +287,38 @@ func (req queryRequest) Do(ctx context.Context) (*sql.Rows, int64, io.Closer, er
 		}
 
 		Log("msg", "executing", "update", req.Query, "params", req.Params)
-		result, execErr := stmt.ExecContext(ctx, paramsS...)
+		result, execErr := conn.Exec(ctx, req.Query, paramsS...)
 		if execErr != nil {
 			C()
 			return nil, 0, nil, fmt.Errorf("update: %w", execErr)
 		}
-		if err = tx.Commit(); err != nil {
+		if err = tx.Commit(ctx); err != nil {
 			C()
 			return nil, 0, nil, fmt.Errorf("commit: %w", err)
 		}
-		aff, _ := result.RowsAffected()
+		aff := result.RowsAffected()
 		return nil, aff, C, nil
 	}
 
 	Log("msg", "executing", "query", req.Query, "params", req.Params)
-	rows, err := stmt.QueryContext(ctx, paramsS...)
+	rows, err := conn.Query(ctx, req.Query, paramsS...)
 	if err != nil {
 		err = fmt.Errorf("%s: %w", req.Query, err)
 	}
 	return rows, 0, C, err
 }
 
-func (rp requestConfig) writeRows(w io.Writer, rows *sql.Rows, fn string) error {
+func (rp requestConfig) writeRows(w io.Writer, rows pgx.Rows, fn string) error {
 	if rp.Separator == 0 {
 		rp.Separator = ','
 	}
 	if rp.Charset == "" {
 		rp.Charset = "utf-8"
 	}
-	cols, err := rows.Columns()
-	if err != nil {
-		return err
+	fields := rows.FieldDescriptions()
+	cols := make([]string, len(fields))
+	for i, f := range fields {
+		cols[i] = string(f.Name)
 	}
 	if rw, ok := w.(http.ResponseWriter); ok {
 		rw.Header().Set("Content-Type", `text/csv; charset="`+rp.Charset+`"`)
@@ -335,7 +335,7 @@ func (rp requestConfig) writeRows(w io.Writer, rows *sql.Rows, fn string) error 
 	cw.Comma = rp.Separator
 	defer cw.Flush()
 	if rp.Head {
-		if err = cw.Write(cols); err != nil {
+		if err := cw.Write(cols); err != nil {
 			return err
 		}
 	}
@@ -348,7 +348,7 @@ func (rp requestConfig) writeRows(w io.Writer, rows *sql.Rows, fn string) error 
 	Log := logger.Log
 	n := 0
 	for rows.Next() {
-		if err = rows.Scan(vals...); err != nil {
+		if err := rows.Scan(vals...); err != nil {
 			Log("msg", "scan", "error", err)
 			return err
 		}
@@ -361,14 +361,15 @@ func (rp requestConfig) writeRows(w io.Writer, rows *sql.Rows, fn string) error 
 				strs[i] = fmt.Sprintf("%+v", v)
 			}
 		}
-		if err = cw.Write(strs); err != nil {
+		if err := cw.Write(strs); err != nil {
 			Log("msg", "write", "record", strs, "error", err)
 			return err
 		}
 		n++
 	}
-	Log("msg", "written", "count", n)
-	return rows.Err()
+	err := rows.Err()
+	Log("msg", "written", "count", n, "error", err)
+	return err
 }
 
 type requestConfig struct {
@@ -434,26 +435,38 @@ func getReqConfig(r *http.Request) (requestConfig, error) {
 	return rp, nil
 }
 
-func connect(db string) (*sql.DB, error) {
+var (
+	pgxLogger pgx.Logger
+	dbs       = make(map[string]*pgxpool.Pool, 8)
+	dbsMtx    sync.RWMutex
+)
+
+func connect(ctx context.Context, db string) (*pgxpool.Conn, error) {
 	dbsMtx.RLock()
-	conn, ok := dbs[db]
+	pool, ok := dbs[db]
 	dbsMtx.RUnlock()
 	if ok {
-		return conn, nil
+		return pool.Acquire(ctx)
 	}
 
 	dbsMtx.Lock()
 	defer dbsMtx.Unlock()
 
+	if pgxLogger == nil {
+		pgxLogger = kitlogadapter.NewLogger(logger)
+	}
+
 	dsn := strings.Replace(dsnTemplate, "{{.Name}}", db, 1)
 	//logger.Log("msg", "connecting...", "dsn", dsn)
-	conn, err := sql.Open("postgres", dsn)
+	cfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
 		return nil, err
 	}
-	conn.SetMaxIdleConns(1)
-	conn.SetMaxOpenConns(10)
+	cfg.ConnConfig.Logger = pgxLogger
 
-	dbs[db] = conn
-	return conn, nil
+	if pool, err = pgxpool.ConnectConfig(ctx, cfg); err != nil {
+		return nil, err
+	}
+	dbs[db] = pool
+	return pool.Acquire(ctx)
 }
