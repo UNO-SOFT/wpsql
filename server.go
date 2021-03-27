@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/UNO-SOFT/wpsql/client"
 	"github.com/dgrijalva/jwt-go"
@@ -368,6 +369,8 @@ func (rp requestConfig) writeRows(w io.Writer, rows pgx.Rows, fn string) error {
 			switch x := v.(type) {
 			case []byte:
 				strs[i] = string(x)
+			case time.Time:
+				strs[i] = x.Format(time.RFC3339)
 			default:
 				strs[i] = fmt.Sprintf("%+v", v)
 			}
