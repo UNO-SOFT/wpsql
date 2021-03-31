@@ -387,7 +387,7 @@ func (rp requestConfig) writeRows(w io.Writer, rows pgx.Rows, fn string) error {
 			case float32, float64:
 				strs[i] = fmt.Sprintf("%f", v)
 			default:
-				panic(fmt.Sprintf("%T %#v", v, v))
+				Log("msg", "unknown value", "type", fmt.Sprintf("%T", v), "value", v)
 				strs[i] = fmt.Sprintf("%v", v)
 			}
 		}
