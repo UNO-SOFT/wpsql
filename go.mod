@@ -9,7 +9,7 @@ require (
 	github.com/go-kit/kit v0.10.0
 	github.com/go-logfmt/logfmt v0.5.0 // indirect
 	github.com/go-stack/stack v1.8.0 // indirect
-	github.com/jackc/pgx/v4 v4.11.0 // indirect
+	github.com/jackc/pgx/v4 v4.11.0
 	github.com/kr/pretty v0.2.1 // indirect
 	github.com/kr/text v0.2.0 // indirect
 	github.com/lib/pq v1.10.0
