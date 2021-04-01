@@ -22,6 +22,7 @@ import (
 	"github.com/tgulacsi/go/text"
 	"github.com/timewasted/go-accept-headers"
 
+	"github.com/jackc/pgtype"
 	"github.com/jackc/pgx/v4"
 	"github.com/jackc/pgx/v4/log/kitlogadapter"
 	"github.com/jackc/pgx/v4/pgxpool"
@@ -242,14 +243,14 @@ func (req queryRequest) Do(ctx context.Context) (rows pgx.Rows, affected int64, 
 	})
 
 	defer func() {
-		if err != nil {
+		if err != nil && C != nil {
 			C.Close()
 		}
 	}()
 
 	req.Query = strings.TrimSpace(req.Query)
 	accessMode := pgx.ReadOnly
-	if updSecret != "" && len(req.Query) >= 3 && !strings.EqualFold(req.Query[:3], "SEL") {
+	if updSecret != "" && req.JWT != "" {
 		accessMode = pgx.ReadWrite
 	}
 	Log("msg", "BEGIN")
@@ -367,28 +368,52 @@ func (rp requestConfig) writeRows(w io.Writer, rows pgx.Rows, fn string) error {
 				strs[i] = ""
 				continue
 			}
-			if vr, ok := v.(driver.Valuer); ok {
-				var err error
-				if v, err = vr.Value(); err != nil {
-					return err
-				}
-			}
 			switch x := v.(type) {
-			case []byte:
-				strs[i] = string(x)
 			case string:
 				strs[i] = x
-			case fmt.Stringer:
-				strs[i] = x.String()
+			case int32:
+				strs[i] = fmt.Sprintf("%d", x)
+			case float64:
+				strs[i] = fmt.Sprintf("%f", x)
 			case time.Time:
 				strs[i] = x.Format(time.RFC3339)
-			case int8, int16, int32, int64, int, uint16, uint32, uint64, uint:
-				strs[i] = fmt.Sprintf("%d", v)
-			case float32, float64:
-				strs[i] = fmt.Sprintf("%f", v)
+			case pgtype.Timestamp:
+				if x.Status != pgtype.Present {
+					strs[i] = ""
+				} else {
+					strs[i] = x.Time.Format(time.RFC3339)
+				}
+			case pgtype.Date:
+				if x.Status != pgtype.Present {
+					strs[i] = ""
+				} else {
+					strs[i] = x.Time.Format(time.RFC3339)
+				}
 			default:
-				Log("msg", "unknown value", "type", fmt.Sprintf("%T", v), "value", v)
-				strs[i] = fmt.Sprintf("%v", v)
+				Log("msg", "Scan", "T", fmt.Sprintf("%T", v), "v", fmt.Sprintf("%#v", v))
+				if vr, ok := v.(driver.Valuer); ok {
+					var err error
+					if v, err = vr.Value(); err != nil {
+						return err
+					}
+				}
+				switch x := v.(type) {
+				case []byte:
+					strs[i] = string(x)
+				case string:
+					strs[i] = x
+				case fmt.Stringer:
+					strs[i] = x.String()
+				case time.Time:
+					strs[i] = x.Format(time.RFC3339)
+				case int8, int16, int32, int64, int, uint16, uint32, uint64, uint:
+					strs[i] = fmt.Sprintf("%d", v)
+				case float32, float64:
+					strs[i] = fmt.Sprintf("%f", v)
+				default:
+					Log("msg", "unknown value", "type", fmt.Sprintf("%T", v), "value", v)
+					strs[i] = fmt.Sprintf("%v", v)
+				}
 			}
 		}
 		if err := cw.Write(strs); err != nil {
