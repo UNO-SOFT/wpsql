@@ -371,7 +371,7 @@ func (rp requestConfig) writeRows(w io.Writer, rows pgx.Rows, fn string) error {
 			switch x := v.(type) {
 			case string:
 				strs[i] = x
-			case int32:
+			case int16, int32, int64, int, uint16, uint32, uint64, uint:
 				strs[i] = fmt.Sprintf("%d", x)
 			case float64:
 				strs[i] = fmt.Sprintf("%f", x)
