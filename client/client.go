@@ -2,14 +2,13 @@
 //
 // SPDX-License-Identifier: APL-2.0
 
+// Package client implements a client for the PostgreSQL through HTTP wpsql server.
 package client
 
 import (
 	"context"
-	"crypto/sha512"
 	"encoding/base64"
 	"encoding/csv"
-	"encoding/json"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -19,15 +18,21 @@ import (
 	"strings"
 	"time"
 
+	"github.com/UNO-SOFT/wpsql/internal"
 	"github.com/dgrijalva/jwt-go"
 )
 
+// Client is a wpsql client.
+// URL must be the URL of the wpsql server.
+// DB is the target database.
+// Secretus needed for data modification only.
 type Client struct {
 	Log func(...interface{}) error
 	*http.Client
 	URL, DB, Secret string
 }
 
+// Query the database.
 func (m Client) Query(ctx context.Context, qry string, params ...string) ([][]string, error) {
 	qry, params = m.prepareQry(qry, params)
 	values := url.Values(make(map[string][]string, 4))
@@ -53,19 +58,13 @@ func (m Client) Query(ctx context.Context, qry string, params ...string) ([][]st
 	return records, nil
 }
 
-func HashStrings(params []string) string {
-	hsh := sha512.New()
-	_ = json.NewEncoder(hsh).Encode(params)
-	var a [sha512.Size]byte
-	return base64.StdEncoding.EncodeToString(hsh.Sum(a[:0]))
-}
-
+// Exec a query.
 func (m Client) Exec(ctx context.Context, qry string, params ...string) error {
 	qry, params = m.prepareQry(qry, params)
 	token := jwt.NewWithClaims(jwt.SigningMethodHS512,
 		jwt.MapClaims(map[string]interface{}{
 			"update": qry,
-			"params": HashStrings(params),
+			"params": internal.HashStrings(params),
 			"exp":    time.Now().Add(time.Minute * 1).Unix(),
 		}))
 	// Set some claims
