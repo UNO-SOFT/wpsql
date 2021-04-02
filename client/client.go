@@ -9,13 +9,13 @@ import (
 	"crypto/sha512"
 	"encoding/base64"
 	"encoding/csv"
-"strconv"
 	"encoding/json"
 	"fmt"
 	"io"
 	"io/ioutil"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -41,16 +41,16 @@ func (m Client) Query(ctx context.Context, qry string, params ...string) ([][]st
 		return nil, err
 	}
 
-if resp.Body != nil {
-	defer resp.Body.Close()
-}
+	if resp.Body != nil {
+		defer resp.Body.Close()
+	}
 
 	var buf strings.Builder
 	records, err := csv.NewReader(io.TeeReader(resp.Body, &buf)).ReadAll()
 	if err != nil {
 		return records, fmt.Errorf("%s: %w", buf.String(), err)
 	}
-	return records, err
+	return records, nil
 }
 
 func HashStrings(params []string) string {
@@ -92,7 +92,7 @@ func (m Client) Exec(ctx context.Context, qry string, params ...string) error {
 	if resp.StatusCode >= 300 {
 		return fmt.Errorf("update %q: %s: %s", values, resp.Status, b)
 	}
-	return fmt.Errorf("%s: %w", m.URL, err)
+	return nil
 }
 
 func (m Client) post(ctx context.Context, values url.Values) (*http.Response, error) {
@@ -133,16 +133,16 @@ func (m Client) prepareQry(qry string, params []string) (string, []string) {
 	var idx int
 	for _, p := range params {
 		j := strings.IndexByte(p, '=')
-		if  j < 0 {
+		if j < 0 {
 			continue
 		}
-		k, v := ":'" + p[:j] + "'", p[j+1:]
+		k, v := ":'"+p[:j]+"'", p[j+1:]
 		for {
 			if j = strings.Index(qry, k); j < 0 {
 				break
 			}
 			idx++
-			qry = qry[:j] + "$"+strconv.Itoa(idx) +  qry[j+len(k):]
+			qry = qry[:j] + "$" + strconv.Itoa(idx) + qry[j+len(k):]
 			flattened = append(flattened, v)
 		}
 	}

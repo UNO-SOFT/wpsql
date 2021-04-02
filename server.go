@@ -294,7 +294,7 @@ func (req queryRequest) Do(ctx context.Context) (rows pgx.Rows, affected int64, 
 				return []byte(updSecret), nil
 			})
 		if parseErr != nil {
-			return nil, 0, nil, fmt.Errorf("%w: parse jwt token %q: %w", ErrBadRequest, given, parseErr)
+			return nil, 0, nil, fmt.Errorf("%v: parse jwt token %q: %w", ErrBadRequest, given, parseErr)
 		} else if !token.Valid {
 			return nil, 0, nil, fmt.Errorf("update token mismatch: %w", ErrAccessDenied)
 		}
@@ -389,6 +389,13 @@ func (rp requestConfig) writeRows(w io.Writer, rows pgx.Rows, fn string) error {
 				} else {
 					strs[i] = x.Time.Format(time.RFC3339)
 				}
+			case pgtype.Numeric:
+				if x.Status != pgtype.Present {
+					strs[i] = ""
+				} else {
+					vs, _ := x.Value()
+					strs[i] = vs.(string)
+				}
 			default:
 				Log("msg", "Scan", "T", fmt.Sprintf("%T", v), "v", fmt.Sprintf("%#v", v))
 				if vr, ok := v.(driver.Valuer); ok {
@@ -402,14 +409,14 @@ func (rp requestConfig) writeRows(w io.Writer, rows pgx.Rows, fn string) error {
 					strs[i] = string(x)
 				case string:
 					strs[i] = x
-				case fmt.Stringer:
-					strs[i] = x.String()
 				case time.Time:
 					strs[i] = x.Format(time.RFC3339)
 				case int8, int16, int32, int64, int, uint16, uint32, uint64, uint:
 					strs[i] = fmt.Sprintf("%d", v)
 				case float32, float64:
 					strs[i] = fmt.Sprintf("%f", v)
+				case fmt.Stringer:
+					strs[i] = x.String()
 				default:
 					Log("msg", "unknown value", "type", fmt.Sprintf("%T", v), "value", v)
 					strs[i] = fmt.Sprintf("%v", v)
@@ -501,7 +508,12 @@ func connect(ctx context.Context, db string) (*pgxpool.Conn, error) {
 	pool, ok := dbs[db]
 	dbsMtx.RUnlock()
 	if ok {
-		return pool.Acquire(ctx)
+		ctx, cancel := context.WithTimeout(ctx, time.Second)
+		conn, err := pool.Acquire(ctx)
+		cancel()
+		if err == nil {
+			return conn, nil
+		}
 	}
 
 	dbsMtx.Lock()
