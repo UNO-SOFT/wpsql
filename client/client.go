@@ -61,9 +61,10 @@ func (m Client) Query(ctx context.Context, qry string, params ...string) ([][]st
 // Exec a query.
 func (m Client) Exec(ctx context.Context, qry string, params ...string) error {
 	qry, params = m.prepareQry(qry, params)
+    q64 := base64.URLEncoding.EncodeToString([]byte(qry))
 	token := jwt.NewWithClaims(jwt.SigningMethodHS512,
 		jwt.MapClaims(map[string]interface{}{
-			"update": qry,
+			"update": q64,
 			"params": internal.HashStrings(params),
 			"exp":    time.Now().Add(time.Minute * 1).Unix(),
 		}))
@@ -78,7 +79,7 @@ func (m Client) Exec(ctx context.Context, qry string, params ...string) error {
 	}
 	values := url.Values(map[string][]string{
 		"_db":    {m.DB},
-		"_q":     {qry},
+		"_q64":   {q64},
 		"_jwt":   {tokenString},
 		"_param": params,
 	})

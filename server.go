@@ -283,9 +283,11 @@ func (req queryRequest) Do(ctx context.Context) (rows pgx.Rows, affected int64, 
 					return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 				}
 				mc, _ := token.Claims.(jwt.MapClaims)
-				if mc["update"] != req.Query {
-					return nil, fmt.Errorf("update given (%q) is not the same as signed (%q)",
-						req.Query, mc["update"])
+				if upd, ok := mc["update"].(string); !(ok && upd == req.Query) {
+                    if upd, err := base64.URLEncoding.DecodeString(upd); !(err == nil && string(upd) == req.Query) {
+                        return nil, fmt.Errorf("update given (%q) is not the same as signed (%q)",
+                            req.Query, mc["update"])
+                    }
 				}
 				if hs := internal.HashStrings(req.Params); mc["params"] != hs && mc["params"] != strings.Join(req.Params, ",") {
 					return nil, fmt.Errorf("update params given (%q) is not the same as signed (%q)",
