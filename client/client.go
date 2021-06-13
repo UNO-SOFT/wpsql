@@ -61,7 +61,7 @@ func (m Client) Query(ctx context.Context, qry string, params ...string) ([][]st
 // Exec a query.
 func (m Client) Exec(ctx context.Context, qry string, params ...string) error {
 	qry, params = m.prepareQry(qry, params)
-    q64 := base64.URLEncoding.EncodeToString([]byte(qry))
+	q64 := base64.URLEncoding.EncodeToString([]byte(qry))
 	token := jwt.NewWithClaims(jwt.SigningMethodHS512,
 		jwt.MapClaims(map[string]interface{}{
 			"update": q64,

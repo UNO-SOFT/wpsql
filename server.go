@@ -284,10 +284,10 @@ func (req queryRequest) Do(ctx context.Context) (rows pgx.Rows, affected int64, 
 				}
 				mc, _ := token.Claims.(jwt.MapClaims)
 				if upd, ok := mc["update"].(string); !(ok && upd == req.Query) {
-                    if upd, err := base64.URLEncoding.DecodeString(upd); !(err == nil && string(upd) == req.Query) {
-                        return nil, fmt.Errorf("update given (%q) is not the same as signed (%q)",
-                            req.Query, mc["update"])
-                    }
+					if upd, err := base64.URLEncoding.DecodeString(upd); !(err == nil && string(upd) == req.Query) {
+						return nil, fmt.Errorf("update given (%q) is not the same as signed (%q)",
+							req.Query, mc["update"])
+					}
 				}
 				if hs := internal.HashStrings(req.Params); mc["params"] != hs && mc["params"] != strings.Join(req.Params, ",") {
 					return nil, fmt.Errorf("update params given (%q) is not the same as signed (%q)",
@@ -320,12 +320,14 @@ func (req queryRequest) Do(ctx context.Context) (rows pgx.Rows, affected int64, 
 	return rows, 0, C, err
 }
 
+const utf8 = "utf-8"
+
 func (rp requestConfig) writeRows(w io.Writer, rows pgx.Rows, fn string) error {
 	if rp.Separator == 0 {
 		rp.Separator = ','
 	}
 	if rp.Charset == "" {
-		rp.Charset = "utf-8"
+		rp.Charset = utf8
 	}
 	fields := rows.FieldDescriptions()
 	cols := make([]string, len(fields))
@@ -337,8 +339,8 @@ func (rp requestConfig) writeRows(w io.Writer, rows pgx.Rows, fn string) error {
 		rw.Header().Set("Csv-Header", strings.Join(cols, ","))
 		rw.Header().Set("Content-Disposition", fmt.Sprintf("inline; filename=%q", fn))
 	}
-	out := io.Writer(w)
-	if rp.Charset != "utf-8" {
+	out := w
+	if rp.Charset != utf8 {
 		tw := text.NewWriter(out, text.GetEncoding(rp.Charset))
 		defer tw.Close()
 		out = tw
@@ -443,7 +445,7 @@ type requestConfig struct {
 }
 
 func getReqConfig(r *http.Request) (requestConfig, error) {
-	rp := requestConfig{Separator: ',', Charset: "utf-8"}
+	rp := requestConfig{Separator: ',', Charset: utf8}
 	values := r.URL.Query()
 	if r.Form != nil {
 		values = r.Form
