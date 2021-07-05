@@ -3,7 +3,7 @@ module github.com/UNO-SOFT/wpsql
 go 1.15
 
 require (
-	github.com/UNO-SOFT/ulog v1.2.2
+	github.com/UNO-SOFT/ulog v1.3.0
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/dgrijalva/jwt-go v3.2.0+incompatible
 	github.com/go-kit/kit v0.10.0
