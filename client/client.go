@@ -10,6 +10,7 @@ import (
 	"encoding/base64"
 	"encoding/csv"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"net/http"
 	"net/url"
@@ -19,7 +20,6 @@ import (
 
 	"github.com/UNO-SOFT/wpsql/internal"
 	"github.com/dgrijalva/jwt-go"
-	"github.com/tgulacsi/go/iohlp"
 )
 
 // Client is a wpsql client.
@@ -32,8 +32,9 @@ type Client struct {
 	URL, DB, Secret string
 }
 
-// Query the database.
-func (m Client) Query(ctx context.Context, qry string, params ...string) ([][]string, error) {
+// QueryWalk calls the given callback for each row.
+// It quits with the error if the callbacks returns an error.
+func (m Client) QueryWalk(ctx context.Context, callback func([]string) error, qry string, params ...string) error {
 	qry, params = m.prepareQry(qry, params)
 	values := url.Values(make(map[string][]string, 4))
 	values.Set("_head", "0")
@@ -43,23 +44,39 @@ func (m Client) Query(ctx context.Context, qry string, params ...string) ([][]st
 
 	resp, err := m.post(ctx, values)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	if resp.Body != nil {
 		defer resp.Body.Close()
 	}
 
-	sr, err := iohlp.MakeSectionReader(resp.Body, 1<<20)
-	if err != nil {
-		return nil, err
+	cr := csv.NewReader(resp.Body)
+	cr.ReuseRecord = true
+	for {
+		record, err := cr.Read()
+		if err != nil {
+			if err == io.EOF {
+				return nil
+			}
+			return err
+		}
+		if err = callback(record); err != nil {
+			return err
+		}
 	}
-	records, err := csv.NewReader(sr).ReadAll()
-	if err != nil {
-		b, _ := ioutil.ReadAll(sr)
-		return records, fmt.Errorf("%s: %w", b, err)
-	}
-	return records, nil
+	return nil
+}
+
+// Query the database.
+func (m Client) Query(ctx context.Context, qry string, params ...string) ([][]string, error) {
+	var records [][]string
+	err := m.QueryWalk(ctx, func(record []string) error {
+		records = append(records, append(make([]string, 0, len(record)), record...)) // reuse
+		return nil
+	},
+		qry, params...)
+	return records, err
 }
 
 // Exec a query.
