@@ -54,6 +54,9 @@ func (m Client) QueryWalk(ctx context.Context, callback func([]string) error, qr
 	cr := csv.NewReader(resp.Body)
 	cr.ReuseRecord = true
 	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		record, err := cr.Read()
 		if err != nil {
 			if err == io.EOF {
