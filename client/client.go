@@ -10,7 +10,6 @@ import (
 	"encoding/base64"
 	"encoding/csv"
 	"fmt"
-	"io"
 	"io/ioutil"
 	"net/http"
 	"net/url"
@@ -20,6 +19,7 @@ import (
 
 	"github.com/UNO-SOFT/wpsql/internal"
 	"github.com/dgrijalva/jwt-go"
+	"github.com/tgulacsi/go/iohlp"
 )
 
 // Client is a wpsql client.
@@ -50,10 +50,14 @@ func (m Client) Query(ctx context.Context, qry string, params ...string) ([][]st
 		defer resp.Body.Close()
 	}
 
-	var buf strings.Builder
-	records, err := csv.NewReader(io.TeeReader(resp.Body, &buf)).ReadAll()
+	sr, err := iohlp.MakeSectionReader(resp.Body, 1<<20)
 	if err != nil {
-		return records, fmt.Errorf("%s: %w", buf.String(), err)
+		return nil, err
+	}
+	records, err := csv.NewReader(sr).ReadAll()
+	if err != nil {
+		b, _ := ioutil.ReadAll(sr)
+		return records, fmt.Errorf("%s: %w", b, err)
 	}
 	return records, nil
 }
@@ -73,7 +77,7 @@ func (m Client) Exec(ctx context.Context, qry string, params ...string) error {
 	tokenString, err := token.SignedString([]byte(m.Secret))
 	if err != nil {
 		if m.Log != nil {
-			m.Log("msg", "SignedString", "secret", len(m.Secret), "error", err)
+			_ = m.Log("msg", "SignedString", "secret", len(m.Secret), "error", err)
 		}
 		return err
 	}
@@ -97,7 +101,7 @@ func (m Client) Exec(ctx context.Context, qry string, params ...string) error {
 
 func (m Client) post(ctx context.Context, values url.Values) (*http.Response, error) {
 	if m.Log != nil {
-		m.Log("msg", "post", "values", values)
+		_ = m.Log("msg", "post", "values", values)
 	}
 	vs := values.Encode()
 	req, err := http.NewRequestWithContext(ctx, "POST", m.URL, strings.NewReader(vs))
@@ -112,7 +116,7 @@ func (m Client) post(ctx context.Context, values url.Values) (*http.Response, er
 	resp, err := cl.Do(req)
 	if err != nil {
 		if m.Log != nil {
-			m.Log("msg", "PostForm", "error", err)
+			_ = m.Log("msg", "PostForm", "error", err)
 		}
 		if req, err = http.NewRequestWithContext(ctx, "GET", m.URL+"?"+vs, nil); err != nil {
 			return nil, err
@@ -147,7 +151,7 @@ func (m Client) prepareQry(qry string, params []string) (string, []string) {
 		}
 	}
 	if m.Log != nil {
-		m.Log("qry", qry)
+		_ = m.Log("qry", qry)
 	}
 	return qry, flattened
 }
