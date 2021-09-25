@@ -1,6 +1,6 @@
 // Copyright 2021 Tamás Gulácsi. All rights reserved.
 //
-// SPDX-License-Identifier: APL-2.0
+// SPDX-License-Identifier: Apache-2.0
 
 // Package client implements a client for the PostgreSQL through HTTP wpsql server.
 package client
@@ -51,7 +51,8 @@ func (m Client) QueryWalk(ctx context.Context, callback func([]string) error, qr
 		defer resp.Body.Close()
 	}
 
-	cr := csv.NewReader(resp.Body)
+	tr := &tailReader{Reader: resp.Body}
+	cr := csv.NewReader(tr)
 	cr.ReuseRecord = true
 	for {
 		if err := ctx.Err(); err != nil {
@@ -62,7 +63,7 @@ func (m Client) QueryWalk(ctx context.Context, callback func([]string) error, qr
 			if err == io.EOF {
 				return nil
 			}
-			return err
+			return fmt.Errorf("%q: %w", tr.Tail, err)
 		}
 		if err = callback(record); err != nil {
 			return err
@@ -174,6 +175,20 @@ func (m Client) prepareQry(qry string, params []string) (string, []string) {
 		_ = m.Log("qry", qry)
 	}
 	return qry, flattened
+}
+
+// tailReader is a reader that remembers the last read block.
+type tailReader struct {
+	io.Reader
+	Tail []byte
+}
+
+func (tr *tailReader) Read(p []byte) (int, error) {
+	n, err := tr.Reader.Read(p)
+	if n != 0 {
+		tr.Tail = append(tr.Tail[:0], p[:n]...)
+	}
+	return n, err
 }
 
 // vim: set fileencoding=utf-8:
