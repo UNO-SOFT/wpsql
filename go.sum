@@ -32,6 +32,8 @@ github.com/Shopify/sarama v1.19.0/go.mod h1:FVkBWblsNy7DGZRfXLU0O9RCGt5g3g3yEuWX
 github.com/Shopify/toxiproxy v2.1.4+incompatible/go.mod h1:OXgGpZ6Cli1/URJOF1DMxUHB2q5Ap20/P/eIdh4G0pI=
 github.com/UNO-SOFT/ulog v1.3.0 h1:yLtTd/jK/bpuhJRv6RnP5yJizGNBSW0KbbpcYCYoqNQ=
 github.com/UNO-SOFT/ulog v1.3.0/go.mod h1:ZqOYqL5/UbbOeyELT8UTTls4Fni6F3cfqshPs7/+he8=
+github.com/UNO-SOFT/ulog v1.3.1 h1:Zd1cePSMvEa+LadalIDVng4mhU/FWpM6K6iffxW+I+Q=
+github.com/UNO-SOFT/ulog v1.3.1/go.mod h1:x14kTiR+nTWQtoeaGaOwK+oLKCde/ajXVIsgV204fkI=
 github.com/VividCortex/gohistogram v1.0.0/go.mod h1:Pf5mBqqDxYaXu3hDrrU+w6nw50o/4+TcAqDqk/vUH7g=
 github.com/afex/hystrix-go v0.0.0-20180502004556-fa1af6a1f4f5/go.mod h1:SkGFH1ia65gfNATL8TAiHDNxPzPdmEL5uirI2Uyuz6c=
 github.com/alecthomas/template v0.0.0-20160405071501-a0175ee3bccc/go.mod h1:LOuyumcjzFXgccqObfd/Ljyb9UuFJ6TxHnclSeseNhc=
@@ -148,6 +150,8 @@ github.com/go-stack/stack v1.8.0 h1:5SgMzNM5HxrEjV0ww2lTmX6E2Izsfxas4+YHWRs3Lsk=
 github.com/go-stack/stack v1.8.0/go.mod h1:v0f6uXyyMGvRgIKkXu+yp6POWl0qKG85gN/melR3HDY=
 github.com/goccy/go-json v0.7.3 h1:Pznres7bC8RRKT9yOn3EZ7fK+8Kle6K9rW2U33QlXZI=
 github.com/goccy/go-json v0.7.3/go.mod h1:6MelG93GURQebXPDq3khkgXZkazVtN9CRI+MGFi0w8I=
+github.com/goccy/go-json v0.7.9 h1:mSp3uo1tr6MXQTYopSNhHTUnJhd2zQ4Yk+HdJZP+ZRY=
+github.com/goccy/go-json v0.7.9/go.mod h1:6MelG93GURQebXPDq3khkgXZkazVtN9CRI+MGFi0w8I=
 github.com/gofrs/uuid v3.2.0+incompatible h1:y12jRkkFxsd7GpqdSZ+/KCs/fJbqpEXSGd4+jfEaewE=
 github.com/gofrs/uuid v3.2.0+incompatible/go.mod h1:b2aQJv3Z4Fp6yNu3cdSllBxTCLRxnplIgP/c0N/04lM=
 github.com/gogo/googleapis v1.1.0/go.mod h1:gf4bu3Q80BeJ6H1S1vYPm8/ELATdvryBaNFGgqEef3s=
