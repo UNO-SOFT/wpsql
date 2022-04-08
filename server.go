@@ -1,4 +1,4 @@
-// Copyright 2021 Tamás Gulácsi. All rights reserved.
+// Copyright 2021, 2022 Tamás Gulácsi. All rights reserved.
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -19,13 +19,13 @@ import (
 
 	"github.com/UNO-SOFT/wpsql/internal"
 	"github.com/dgrijalva/jwt-go"
+	"github.com/go-logr/logr"
 	"github.com/tgulacsi/go/text"
 	"github.com/timewasted/go-accept-headers"
 
 	"github.com/jackc/pgtype"
-	"github.com/jackc/pgx/v4"
-	"github.com/jackc/pgx/v4/log/kitlogadapter"
-	"github.com/jackc/pgx/v4/pgxpool"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func (srv server) restHandler(w http.ResponseWriter, r *http.Request) {
@@ -33,7 +33,6 @@ func (srv server) restHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "only GET", http.StatusMethodNotAllowed)
 		return
 	}
-	Log := logger.Log
 	// /{db}/{table/{id}/{field}?
 	path := strings.SplitN(strings.TrimPrefix(r.URL.Path, "/"), "/", 4)
 	if len(path) < 3 {
@@ -42,7 +41,7 @@ func (srv server) restHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	rp, err := getReqConfig(r)
 	if err != nil {
-		Log("rp", rp, "error", err)
+		logger.Error(err, "getReqConfig", "rp", rp)
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -65,8 +64,8 @@ func (srv server) restHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	qry := "SELECT COUNT(0) FROM information_schema.columns WHERE table_name = $1 AND column_name = $2"
 	if err = conn.QueryRow(ctx, qry, table, col).Scan(&n); err != nil {
+		logger.Error(err, "select", qry, "table", table, "col", col)
 		err = fmt.Errorf("%s: %w", qry, err)
-		Log("select", qry, "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -77,15 +76,15 @@ func (srv server) restHandler(w http.ResponseWriter, r *http.Request) {
 	qry = fmt.Sprintf("SELECT "+cols+"  FROM %q WHERE id = $1", table) //nolint:gas
 	rows, err := conn.Query(ctx, qry, path[2])
 	if err != nil {
+		logger.Error(err, "select", qry, "path", path[2])
 		err = fmt.Errorf("%s: %w", qry, err)
-		Log("select", qry, "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	defer rows.Close()
 
 	if err = rp.writeRows(w, rows, table+".csv"); err != nil {
-		Log("msg", "writeRows", "error", err)
+		logger.Error(err, "writeRows")
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -118,13 +117,13 @@ func (srv server) queryHandler(w http.ResponseWriter, r *http.Request) {
 				s, err = base64.StdEncoding.DecodeString(req.Query)
 			}
 			if err != nil {
-				logger.Log("msg", "decode", "q", req.Query, "error", err)
+				logger.Error(err, "decode", "q", req.Query)
 			} else {
 				req.Query = string(s)
 			}
 		}
 	}
-	logger.Log("method", r.Method, "path", r.URL.Path, "qs", r.Form, "query", req.Query)
+	logger.V(1).Info("queryHandler", "method", r.Method, "path", r.URL.Path, "qs", r.Form, "query", req.Query)
 
 	if req.Query == "" {
 		w.Header().Set("Content-Type", "text/html; charset=\"utf-8\"")
@@ -170,11 +169,10 @@ func (srv server) queryHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("bad db name (%q)", req.DB), http.StatusBadRequest)
 		return
 	}
-	Log := logger.Log
-	Log("parsing", r)
+	logger.V(1).Info("parsing", "request", r)
 	var err error
 	if req.Config, err = getReqConfig(r); err != nil {
-		Log("msg", "getReqConfig", "error", err)
+		logger.Error(err, "getReqConfig")
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -194,11 +192,11 @@ func (srv server) queryHandler(w http.ResponseWriter, r *http.Request) {
 			req.Params = append(req.Params, arr...)
 		}
 	}
-	Log("params", req.Params)
+	logger.V(1).Info("req.Params", "params", req.Params)
 
 	rows, affected, closer, err := req.Do(r.Context())
 	if err != nil {
-		Log("msg", "doQuery", "req", req, "error", err)
+		logger.Error(err, "doQuery", "req", req)
 		code := http.StatusInternalServerError
 		if errors.Is(err, ErrAccessDenied) {
 			code = 401
@@ -217,18 +215,17 @@ func (srv server) queryHandler(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 
 	if err := req.Config.writeRows(w, rows, "SELECT.csv"); err != nil {
-		Log("msg", "writeRows", "error", err)
+		logger.Error(err, "writeRows")
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 }
 
 func (req queryRequest) Do(ctx context.Context) (rows pgx.Rows, affected int64, C io.Closer, err error) {
-	Log := logger.Log
-	Log("connecting", req.DB)
+	logger.V(1).Info("connecting", "db", req.DB)
 	conn, connErr := connect(ctx, req.DB)
 	if connErr != nil {
-		Log("msg", "connect", "db", req.DB, "error", connErr)
+		logger.Error(connErr, "connect", "db", req.DB)
 		return nil, 0, nil, fmt.Errorf("connecting to %s: %w", req.DB, connErr)
 	}
 	tbc := append(make([]func() error, 0, 4), func() error { conn.Release(); return nil })
@@ -253,10 +250,10 @@ func (req queryRequest) Do(ctx context.Context) (rows pgx.Rows, affected int64, 
 	if updSecret != "" && req.JWT != "" {
 		accessMode = pgx.ReadWrite
 	}
-	Log("msg", "BEGIN")
+	logger.V(1).Info("BEGIN")
 	tx, err := conn.BeginTx(ctx, pgx.TxOptions{AccessMode: accessMode})
 	if err != nil {
-		Log("BEGIN", err)
+		logger.Error(err, "BEGIN")
 		return nil, 0, nil, fmt.Errorf("begin: %w", err)
 	}
 	tbc = append(tbc, func() error { return tx.Rollback(context.Background()) })
@@ -301,7 +298,7 @@ func (req queryRequest) Do(ctx context.Context) (rows pgx.Rows, affected int64, 
 			return nil, 0, nil, fmt.Errorf("update token mismatch: %w", ErrAccessDenied)
 		}
 
-		Log("msg", "executing", "update", req.Query, "params", req.Params)
+		logger.Info("executing", "update", req.Query, "params", req.Params)
 		result, execErr := conn.Exec(ctx, req.Query, paramsS...)
 		if execErr != nil {
 			return nil, 0, nil, fmt.Errorf("update: %w", execErr)
@@ -313,7 +310,7 @@ func (req queryRequest) Do(ctx context.Context) (rows pgx.Rows, affected int64, 
 		return nil, aff, C, nil
 	}
 
-	Log("msg", "executing", "query", req.Query, "params", req.Params)
+	logger.Info("executing", "query", req.Query, "params", req.Params)
 	if rows, err = conn.Query(ctx, req.Query, paramsS...); err != nil {
 		err = fmt.Errorf("%s: %w", req.Query, err)
 	}
@@ -359,11 +356,10 @@ func (rp requestConfig) writeRows(w io.Writer, rows pgx.Rows, fn string) error {
 	}
 	strs := make([]string, len(vals))
 
-	Log := logger.Log
 	n := 0
 	for rows.Next() {
 		if err := rows.Scan(vals...); err != nil {
-			Log("msg", "scan", "error", err)
+			logger.Error(err, "scan", "vals", vals)
 			return err
 		}
 		for i, pv := range vals {
@@ -401,7 +397,7 @@ func (rp requestConfig) writeRows(w io.Writer, rows pgx.Rows, fn string) error {
 					strs[i] = vs.(string)
 				}
 			default:
-				Log("msg", "Scan", "T", fmt.Sprintf("%T", v), "v", fmt.Sprintf("%#v", v))
+				logger.Info("Scan", "T", fmt.Sprintf("%T", v), "v", fmt.Sprintf("%#v", v))
 				if vr, ok := v.(driver.Valuer); ok {
 					var err error
 					if v, err = vr.Value(); err != nil {
@@ -422,19 +418,19 @@ func (rp requestConfig) writeRows(w io.Writer, rows pgx.Rows, fn string) error {
 				case fmt.Stringer:
 					strs[i] = x.String()
 				default:
-					Log("msg", "unknown value", "type", fmt.Sprintf("%T", v), "value", v)
+					logger.Info("unknown value", "type", fmt.Sprintf("%T", v), "value", v)
 					strs[i] = fmt.Sprintf("%v", v)
 				}
 			}
 		}
 		if err := cw.Write(strs); err != nil {
-			Log("msg", "write", "record", strs, "error", err)
+			logger.Error(err, "write", "record", strs)
 			return err
 		}
 		n++
 	}
 	err := rows.Err()
-	Log("msg", "written", "count", n, "error", err)
+	logger.Info("written", "count", n, "error", err)
 	return err
 }
 
@@ -451,7 +447,7 @@ func getReqConfig(r *http.Request) (requestConfig, error) {
 		values = r.Form
 	}
 	rp.Head = values.Get("_head") != "0"
-	logger.Log("head", rp.Head, "form", values)
+	logger.V(1).Info("getReqConfig", "head", rp.Head, "form", values)
 
 	/*
 		outType = values.Get("_accept")
@@ -492,7 +488,7 @@ func getReqConfig(r *http.Request) (requestConfig, error) {
 	if rp.Charset == "" {
 		rp.Charset = "utf-8"
 	} else if rp.Charset, err = accept.Parse(rp.Charset).Negotiate("utf-8", "iso-8859-2"); err != nil || rp.Charset == "" {
-		logger.Log("charset", rp.Charset, "error", err)
+		logger.Error(err, "parse accept", "charset", rp.Charset)
 		if err == nil {
 			err = errors.New("unknown")
 		}
@@ -502,9 +498,8 @@ func getReqConfig(r *http.Request) (requestConfig, error) {
 }
 
 var (
-	pgxLogger pgx.Logger
-	dbs       = make(map[string]*pgxpool.Pool, 8)
-	dbsMtx    sync.RWMutex
+	dbs    = make(map[string]*pgxpool.Pool, 8)
+	dbsMtx sync.RWMutex
 )
 
 func connect(ctx context.Context, db string) (*pgxpool.Conn, error) {
@@ -523,21 +518,26 @@ func connect(ctx context.Context, db string) (*pgxpool.Conn, error) {
 	dbsMtx.Lock()
 	defer dbsMtx.Unlock()
 
-	if pgxLogger == nil {
-		pgxLogger = kitlogadapter.NewLogger(logger)
-	}
-
 	dsn := strings.Replace(dsnTemplate, "{{.Name}}", db, 1)
-	//logger.Log("msg", "connecting...", "dsn", dsn)
 	cfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
 		return nil, err
 	}
-	cfg.ConnConfig.Logger = pgxLogger
+	cfg.ConnConfig.Logger = pgxLogger{Logger: logger.V(1)}
 
 	if pool, err = pgxpool.ConnectConfig(ctx, cfg); err != nil {
 		return nil, err
 	}
 	dbs[db] = pool
 	return pool.Acquire(ctx)
+}
+
+type pgxLogger struct{ logr.Logger }
+
+func (p pgxLogger) Log(ctx context.Context, level pgx.LogLevel, msg string, data map[string]interface{}) {
+	keyvals := make([]interface{}, 0, len(data))
+	for k, v := range data {
+		keyvals = append(keyvals, k, v)
+	}
+	p.Logger.V(int(level)-3).Info(msg, keyvals...)
 }

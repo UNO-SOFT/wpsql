@@ -14,17 +14,18 @@ import (
 	"os"
 	"strings"
 
-	"github.com/UNO-SOFT/ulog"
 	"github.com/UNO-SOFT/wpsql/client"
+	"github.com/go-logr/zerologr"
+	"github.com/rs/zerolog"
 
-	"github.com/go-kit/kit/log"
 	"github.com/peterbourgon/ff/v3/ffcli"
 	"gopkg.in/go-on/mannersagain.v1"
 
 	"github.com/tgulacsi/go/globalctx"
 )
 
-var logger = log.Logger(ulog.New())
+var zl = zerolog.New(os.Stderr).With().Timestamp().Logger().Level(zerolog.InfoLevel)
+var logger = zerologr.New(&zl)
 
 var (
 	dsnTemplate string
@@ -33,7 +34,7 @@ var (
 
 func main() {
 	if err := Main(); err != nil {
-		logger.Log("error", err)
+		logger.Error(err, "main")
 		os.Exit(1)
 	}
 }
@@ -58,7 +59,7 @@ func Main() error {
 			}
 			http.Handle(*flagRestEP, http.StripPrefix(*flagRestEP, http.HandlerFunc(srv.restHandler)))
 			http.HandleFunc("/", srv.queryHandler)
-			logger.Log("msg", "serving", "address", *flagHTTP,
+			logger.Info("serving", "address", *flagHTTP,
 				"REST endpoint", *flagRestEP, "databases", srv.Databases)
 			return mannersagain.ListenAndServe(*flagHTTP, nil)
 		},
@@ -72,7 +73,7 @@ func Main() error {
 	clientCmd := ffcli.Command{Name: "client", FlagSet: fs,
 		Exec: func(ctx context.Context, args []string) error {
 			if *flagClientVerbose {
-				m.Log = logger.Log
+				m.Logger = logger
 			}
 			qry, params := strings.TrimSpace(args[0]), args[1:]
 			m.Secret = os.Getenv(pqUpdSecretEnv)

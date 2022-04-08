@@ -1,4 +1,4 @@
-// Copyright 2021 Tamás Gulácsi. All rights reserved.
+// Copyright 2021, 2022 Tamás Gulácsi. All rights reserved.
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/csv"
+	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -20,6 +21,7 @@ import (
 
 	"github.com/UNO-SOFT/wpsql/internal"
 	"github.com/dgrijalva/jwt-go"
+	"github.com/go-logr/logr"
 )
 
 // Client is a wpsql client.
@@ -27,7 +29,7 @@ import (
 // DB is the target database.
 // Secretus needed for data modification only.
 type Client struct {
-	Log func(...interface{}) error
+	logr.Logger
 	*http.Client
 	URL, DB, Secret string
 }
@@ -60,7 +62,7 @@ func (m Client) QueryWalk(ctx context.Context, callback func([]string) error, qr
 		}
 		record, err := cr.Read()
 		if err != nil {
-			if err == io.EOF {
+			if errors.Is(err, io.EOF) {
 				return nil
 			}
 			return fmt.Errorf("%q: %w", tr.Tail, err)
@@ -69,7 +71,6 @@ func (m Client) QueryWalk(ctx context.Context, callback func([]string) error, qr
 			return err
 		}
 	}
-	return nil
 }
 
 // Query the database.
@@ -97,9 +98,7 @@ func (m Client) Exec(ctx context.Context, qry string, params ...string) error {
 	// Sign and get the complete encoded token as a string
 	tokenString, err := token.SignedString([]byte(m.Secret))
 	if err != nil {
-		if m.Log != nil {
-			_ = m.Log("msg", "SignedString", "secret", len(m.Secret), "error", err)
-		}
+		m.Error(err, "SignedString", "secret", len(m.Secret))
 		return err
 	}
 	values := url.Values(map[string][]string{
@@ -121,9 +120,7 @@ func (m Client) Exec(ctx context.Context, qry string, params ...string) error {
 }
 
 func (m Client) post(ctx context.Context, values url.Values) (*http.Response, error) {
-	if m.Log != nil {
-		_ = m.Log("msg", "post", "values", values)
-	}
+	m.V(1).Info("post", "values", values)
 	vs := values.Encode()
 	req, err := http.NewRequestWithContext(ctx, "POST", m.URL, strings.NewReader(vs))
 	if err != nil {
@@ -136,9 +133,7 @@ func (m Client) post(ctx context.Context, values url.Values) (*http.Response, er
 	}
 	resp, err := cl.Do(req)
 	if err != nil {
-		if m.Log != nil {
-			_ = m.Log("msg", "PostForm", "error", err)
-		}
+		m.Error(err, "PostForm")
 		if req, err = http.NewRequestWithContext(ctx, "GET", m.URL+"?"+vs, nil); err != nil {
 			return nil, err
 		}
@@ -171,9 +166,7 @@ func (m Client) prepareQry(qry string, params []string) (string, []string) {
 			flattened = append(flattened, v)
 		}
 	}
-	if m.Log != nil {
-		_ = m.Log("qry", qry)
-	}
+	m.V(1).Info("prepareQry", "qry", qry)
 	return qry, flattened
 }
 
