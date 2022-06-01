@@ -20,13 +20,13 @@ import (
 
 	"github.com/UNO-SOFT/wpsql/internal"
 	"github.com/dgrijalva/jwt-go"
-	"github.com/fxamacker/cbor"
+	"github.com/fxamacker/cbor/v2"
 	"github.com/go-logr/logr"
 	"github.com/tgulacsi/go/text"
 	"github.com/timewasted/go-accept-headers"
 
-	"github.com/jackc/pgtype"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -406,19 +406,19 @@ func (rp requestConfig) writeRows(w io.Writer, rows pgx.Rows, fn string) error {
 			case time.Time:
 				strs[i] = x.Format(time.RFC3339)
 			case pgtype.Timestamp:
-				if x.Status != pgtype.Present {
+				if !x.Valid {
 					strs[i] = ""
 				} else {
 					strs[i] = x.Time.Format(time.RFC3339)
 				}
 			case pgtype.Date:
-				if x.Status != pgtype.Present {
+				if !x.Valid {
 					strs[i] = ""
 				} else {
 					strs[i] = x.Time.Format(time.RFC3339)
 				}
 			case pgtype.Numeric:
-				if x.Status != pgtype.Present {
+				if !x.Valid {
 					strs[i] = ""
 				} else {
 					vs, _ := x.Value()
@@ -457,7 +457,7 @@ func (rp requestConfig) writeRows(w io.Writer, rows pgx.Rows, fn string) error {
 		var enc interface{ Encode(interface{}) error }
 		switch rp.Codec {
 		case CodecCBOR:
-			enc = cbor.NewEncoder(w, cbor.EncOptions{})
+			enc = cbor.NewEncoder(w)
 		case CodecJSON:
 			enc = json.NewEncoder(w)
 		}
@@ -468,7 +468,48 @@ func (rp requestConfig) writeRows(w io.Writer, rows pgx.Rows, fn string) error {
 		}
 		row := make([]interface{}, len(cols))
 		addCol = func(i int, v interface{}) error {
-			row[i] = v
+			row[i] = nil
+			switch x := v.(type) {
+			case pgtype.Bool:
+				if x.Valid {
+					row[i] = x.Bool
+				}
+			case pgtype.Float4:
+				if x.Valid {
+					row[i] = x.Float32
+				}
+			case pgtype.Float8:
+				if x.Valid {
+					row[i] = x.Float64
+				}
+			case pgtype.Int2:
+				if x.Valid {
+					row[i] = x.Int16
+				}
+			case pgtype.Int4:
+				if x.Valid {
+					row[i] = x.Int32
+				}
+			case pgtype.Int8:
+				if x.Valid {
+					row[i] = x.Int64
+				}
+			case pgtype.Timestamp:
+				if x.Valid {
+					row[i] = x.Time
+				}
+			case pgtype.Date:
+				if x.Valid {
+					row[i] = x.Time
+				}
+			case pgtype.Numeric:
+				if x.Valid {
+					vs, _ := x.Value()
+					row[i] = vs.(string)
+				}
+			default:
+				row[i] = v
+			}
 			return nil
 		}
 		writeRow = func() error {
