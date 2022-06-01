@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/csv"
 	"flag"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -80,12 +81,23 @@ func Main() error {
 			if m.Secret != "" && len(qry) > 2 && strings.EqualFold(qry[:3], "UPD") {
 				return m.Exec(ctx, qry, params...)
 			}
-			rows, err := m.Query(ctx, qry, params...)
-			if err != nil {
-				return err
-			}
 			cw := csv.NewWriter(os.Stdout)
-			return cw.WriteAll(rows)
+			var strs []string
+			return m.QueryWalk(ctx, func(record interface{}) error {
+				switch x := record.(type) {
+				case []string:
+					return cw.Write(x)
+				case []interface{}:
+					strs = strs[:0]
+					for _, v := range x {
+						strs = append(strs, fmt.Sprintf("%v", v))
+					}
+					return cw.Write(strs)
+				default:
+					return fmt.Errorf("unknown type %T", record)
+				}
+			},
+				qry, params...)
 		},
 	}
 
