@@ -8,7 +8,6 @@ import (
 	"context"
 	"encoding/csv"
 	"flag"
-	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -82,21 +81,8 @@ func Main() error {
 				return m.Exec(ctx, qry, params...)
 			}
 			cw := csv.NewWriter(os.Stdout)
-			var strs []string
-			return m.QueryWalk(ctx, func(record interface{}) error {
-				switch x := record.(type) {
-				case []string:
-					return cw.Write(x)
-				case []interface{}:
-					strs = strs[:0]
-					for _, v := range x {
-						strs = append(strs, fmt.Sprintf("%v", v))
-					}
-					return cw.Write(strs)
-				default:
-					return fmt.Errorf("unknown type %T", record)
-				}
-			},
+			return m.QueryStringsWalk(ctx,
+				func(record []string) error { return cw.Write(record) },
 				qry, params...)
 		},
 	}

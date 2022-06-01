@@ -35,17 +35,20 @@ type Client struct {
 	URL, DB, Secret string
 }
 
-// QueryWalk calls the given callback for each row.
-// It quits with the error if the callbacks returns an error.
-func (m Client) QueryWalk(ctx context.Context, callback func(interface{}) error, qry string, params ...string) error {
+func (m Client) prepareQryWalk(qry string, params []string) url.Values {
 	qry, params = m.prepareQry(qry, params)
 	values := url.Values(make(map[string][]string, 4))
 	values.Set("_head", "0")
 	values.Set("_db", m.DB)
 	values.Set("_q64", base64.URLEncoding.EncodeToString([]byte(qry)))
 	values["_param"] = params
+	return values
+}
 
-	resp, err := m.post(ctx, values)
+// QueryStringsWalk calls the given callback for each row.
+// It quits with the error if the callbacks returns an error.
+func (m Client) QueryStringsWalk(ctx context.Context, callback func([]string) error, qry string, params ...string) error {
+	resp, err := m.post(ctx, m.prepareQryWalk(qry, params), false)
 	if err != nil {
 		return err
 	}
@@ -55,48 +58,71 @@ func (m Client) QueryWalk(ctx context.Context, callback func(interface{}) error,
 	}
 
 	tr := &tailReader{Reader: resp.Body}
-	if resp.Header.Get("Content-Type") == "application/cbor" {
-		dec := cbor.NewDecoder(tr)
-		row := make([]interface{}, strings.Count(resp.Header.Get("Csv-Header"), ","))
-		for {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			if err := dec.Decode(&row); err != nil {
-				if errors.Is(err, io.EOF) {
-					return nil
-				}
-				return fmt.Errorf("%q: %w", tr.Tail, err)
-			}
-			if err := callback(row); err != nil {
-				return err
-			}
+	cr := csv.NewReader(tr)
+	cr.ReuseRecord = false
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
 		}
-	} else {
-		cr := csv.NewReader(tr)
-		cr.ReuseRecord = false
-		for {
-			if err := ctx.Err(); err != nil {
-				return err
+		record, err := cr.Read()
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return nil
 			}
-			record, err := cr.Read()
-			if err != nil {
-				if errors.Is(err, io.EOF) {
-					return nil
-				}
-				return fmt.Errorf("%q: %w", tr.Tail, err)
-			}
-			if err = callback(record); err != nil {
-				return err
-			}
+			return fmt.Errorf("%q: %w", tr.Tail, err)
+		}
+		if err = callback(record); err != nil {
+			return err
 		}
 	}
 }
 
+// QueryWalk calls the given callback for each row.
+// It quits with the error if the callbacks returns an error.
+func (m Client) QueryWalk(ctx context.Context, callback func([]interface{}) error, qry string, params ...string) error {
+	resp, err := m.post(ctx, m.prepareQryWalk(qry, params), true)
+	if err != nil {
+		return err
+	}
+
+	if resp.Body != nil {
+		defer resp.Body.Close()
+	}
+
+	tr := &tailReader{Reader: resp.Body}
+	dec := cbor.NewDecoder(tr)
+	row := make([]interface{}, strings.Count(resp.Header.Get("Csv-Header"), ","))
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := dec.Decode(&row); err != nil {
+			if errors.Is(err, io.EOF) {
+				return nil
+			}
+			return fmt.Errorf("%q: %w", tr.Tail, err)
+		}
+		if err := callback(row); err != nil {
+			return err
+		}
+	}
+}
+
+// QueryStrings returns the query's results as []string the database.
+func (m Client) QueryStrings(ctx context.Context, qry string, params ...string) ([][]string, error) {
+	var records [][]string
+	err := m.QueryStringsWalk(ctx, func(record []string) error {
+		records = append(records, append(make([]string, 0, len(record)), record...))
+		return nil
+	},
+		qry, params...)
+	return records, err
+}
+
 // Query the database.
-func (m Client) Query(ctx context.Context, qry string, params ...string) ([]interface{}, error) {
-	var records []interface{}
-	err := m.QueryWalk(ctx, func(record interface{}) error {
+func (m Client) Query(ctx context.Context, qry string, params ...string) ([][]interface{}, error) {
+	var records [][]interface{}
+	err := m.QueryWalk(ctx, func(record []interface{}) error {
 		records = append(records, record)
 		return nil
 	},
@@ -127,7 +153,7 @@ func (m Client) Exec(ctx context.Context, qry string, params ...string) error {
 		"_jwt":   {tokenString},
 		"_param": params,
 	})
-	resp, err := m.post(ctx, values)
+	resp, err := m.post(ctx, values, false)
 	if err != nil {
 		return err
 	}
@@ -139,7 +165,7 @@ func (m Client) Exec(ctx context.Context, qry string, params ...string) error {
 	return nil
 }
 
-func (m Client) post(ctx context.Context, values url.Values) (*http.Response, error) {
+func (m Client) post(ctx context.Context, values url.Values, askCBOR bool) (*http.Response, error) {
 	m.V(1).Info("post", "values", values)
 	vs := values.Encode()
 	req, err := http.NewRequestWithContext(ctx, "POST", m.URL, strings.NewReader(vs))
@@ -147,7 +173,9 @@ func (m Client) post(ctx context.Context, values url.Values) (*http.Response, er
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Accept", "application/cbor")
+	if askCBOR {
+		req.Header.Set("Accept", "application/cbor")
+	}
 	cl := m.Client
 	if cl == nil {
 		cl = http.DefaultClient
