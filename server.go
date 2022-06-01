@@ -9,6 +9,7 @@ import (
 	"database/sql/driver"
 	"encoding/base64"
 	"encoding/csv"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -19,6 +20,7 @@ import (
 
 	"github.com/UNO-SOFT/wpsql/internal"
 	"github.com/dgrijalva/jwt-go"
+	"github.com/fxamacker/cbor"
 	"github.com/go-logr/logr"
 	"github.com/tgulacsi/go/text"
 	"github.com/timewasted/go-accept-headers"
@@ -123,7 +125,7 @@ func (srv server) queryHandler(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	logger.V(1).Info("queryHandler", "method", r.Method, "path", r.URL.Path, "qs", r.Form, "query", req.Query)
+	logger.Info("queryHandler", "method", r.Method, "path", r.URL.Path, "qs", r.Form, "query", req.Query)
 
 	if req.Query == "" {
 		w.Header().Set("Content-Type", "text/html; charset=\"utf-8\"")
@@ -319,56 +321,82 @@ func (req queryRequest) Do(ctx context.Context) (rows pgx.Rows, affected int64, 
 
 const utf8 = "utf-8"
 
+type codec struct{ Name string }
+
+var (
+	CodecCSV  = codec{"csv"}
+	CodecCBOR = codec{"cbor"}
+	CodecJSON = codec{"json"}
+)
+
 func (rp requestConfig) writeRows(w io.Writer, rows pgx.Rows, fn string) error {
-	if rp.Separator == 0 {
-		rp.Separator = ','
-	}
 	if rp.Charset == "" {
 		rp.Charset = utf8
 	}
+	if rp.Separator == 0 {
+		rp.Separator = ','
+	}
+
 	fields := rows.FieldDescriptions()
 	cols := make([]string, len(fields))
 	for i, f := range fields {
 		cols[i] = string(f.Name)
 	}
+	ct := rp.Codec.Name
 	if rw, ok := w.(http.ResponseWriter); ok {
-		rw.Header().Set("Content-Type", `text/csv; charset="`+rp.Charset+`"`)
+		switch rp.Codec {
+		case CodecCSV:
+			ct = `text/csv; charset="` + rp.Charset + `"`
+		case CodecJSON, CodecCBOR:
+			ct = "application/" + rp.Codec.Name
+		}
+		rw.Header().Set("Content-Type", ct)
 		rw.Header().Set("Csv-Header", strings.Join(cols, ","))
 		rw.Header().Set("Content-Disposition", fmt.Sprintf("inline; filename=%q", fn))
 	}
-	out := w
-	if rp.Charset != utf8 {
-		tw := text.NewWriter(out, text.GetEncoding(rp.Charset))
-		defer tw.Close()
-		out = tw
-	}
-	cw := csv.NewWriter(out)
-	cw.Comma = rp.Separator
-	defer cw.Flush()
-	if rp.Head {
-		if err := cw.Write(cols); err != nil {
-			return err
-		}
-	}
+	logger.Info("writeRows", "contentType", ct)
 	vals := make([]interface{}, len(cols))
 	for i := range vals {
 		vals[i] = new(interface{})
 	}
-	strs := make([]string, len(vals))
 
-	n := 0
-	for rows.Next() {
-		if err := rows.Scan(vals...); err != nil {
-			logger.Error(err, "scan", "vals", vals)
-			return err
+	var addCol func(i int, v interface{}) error
+	var writeRow func() error
+	switch rp.Codec {
+	case CodecCSV:
+		out := w
+		if rp.Charset != utf8 {
+			tw := text.NewWriter(out, text.GetEncoding(rp.Charset))
+			defer tw.Close()
+			out = tw
 		}
-		for i, pv := range vals {
-			v := *(pv.(*interface{}))
+		cw := csv.NewWriter(out)
+		cw.Comma = rp.Separator
+		defer cw.Flush()
+		if rp.Head {
+			if err := cw.Write(cols); err != nil {
+				return err
+			}
+		}
+		strs := make([]string, len(vals))
+		writeRow = func() error {
+			if err := cw.Write(strs); err != nil {
+				return fmt.Errorf("write row %q: %w", strs, err)
+			}
+			return nil
+		}
+		addCol = func(i int, v interface{}) error {
 			if v == nil {
 				strs[i] = ""
-				continue
+				return nil
 			}
 			switch x := v.(type) {
+			case bool:
+				if x {
+					strs[i] = "t"
+				} else {
+					strs[i] = "f"
+				}
 			case string:
 				strs[i] = x
 			case int16, int32, int64, int, uint16, uint32, uint64, uint:
@@ -422,9 +450,53 @@ func (rp requestConfig) writeRows(w io.Writer, rows pgx.Rows, fn string) error {
 					strs[i] = fmt.Sprintf("%v", v)
 				}
 			}
+			return nil
 		}
-		if err := cw.Write(strs); err != nil {
-			logger.Error(err, "write", "record", strs)
+
+	case CodecCBOR, CodecJSON:
+		var enc interface{ Encode(interface{}) error }
+		switch rp.Codec {
+		case CodecCBOR:
+			enc = cbor.NewEncoder(w, cbor.EncOptions{})
+		case CodecJSON:
+			enc = json.NewEncoder(w)
+		}
+		if rp.Head {
+			if err := enc.Encode(cols); err != nil {
+				return err
+			}
+		}
+		row := make([]interface{}, len(cols))
+		addCol = func(i int, v interface{}) error {
+			row[i] = v
+			return nil
+		}
+		writeRow = func() error {
+			if err := enc.Encode(row); err != nil {
+				return fmt.Errorf("encode %v: %w", row, err)
+			}
+			return nil
+		}
+
+	default:
+		return fmt.Errorf("%q: %w", rp.Codec, ErrUnknownCodec)
+	}
+
+	n := 0
+	for rows.Next() {
+		if err := rows.Scan(vals...); err != nil {
+			logger.Error(err, "scan", "vals", vals)
+			return err
+		}
+		for i, pv := range vals {
+			v := *(pv.(*interface{}))
+			if err := addCol(i, v); err != nil {
+				logger.Error(err, "addCol", "i", i, "value", v)
+				return err
+			}
+		}
+		if err := writeRow(); err != nil {
+			logger.Error(err, "write")
 			return err
 		}
 		n++
@@ -436,9 +508,12 @@ func (rp requestConfig) writeRows(w io.Writer, rows pgx.Rows, fn string) error {
 
 type requestConfig struct {
 	Charset   string
+	Codec     codec
 	Separator rune
 	Head      bool
 }
+
+var ErrUnknownCodec = errors.New("unknown codec")
 
 func getReqConfig(r *http.Request) (requestConfig, error) {
 	rp := requestConfig{Separator: ',', Charset: utf8}
@@ -449,50 +524,64 @@ func getReqConfig(r *http.Request) (requestConfig, error) {
 	rp.Head = values.Get("_head") != "0"
 	logger.V(1).Info("getReqConfig", "head", rp.Head, "form", values)
 
-	/*
-		outType = values.Get("_accept")
-		if outType == "" {
-			outType = r.Header.Get("Accept")
-		}
-		if outType != "" {
-			accepts := accept.Parse(outType)
-		AcceptLoop:
-			for _, a := range accepts {
-				if a.Extensions != nil {
-					switch a.Extensions["separator"] {
-					case "":
-						continue
-					case "comma":
-						separator = ','
-						break AcceptLoop
-					case "semicolon":
-						separator = ';'
-						break AcceptLoop
-					default:
-						continue
-					}
+	outType := values.Get("_accept")
+	if outType == "" {
+		outType = r.Header.Get("Accept")
+	}
+	if outType != "" {
+		accepts := accept.Parse(outType)
+	AcceptLoop:
+		for _, a := range accepts {
+			if a.Extensions != nil {
+				switch a.Extensions["separator"] {
+				case "":
+					continue
+				case "comma":
+					rp.Separator = ','
+					break AcceptLoop
+				case "semicolon":
+					rp.Separator = ';'
+					break AcceptLoop
+				default:
+					continue
 				}
 			}
-			if outType, err = accepts.Negotiate("text/csv"); err != nil || outType == "" {
-				err = fmt.Errorf("bad Accept=%q: %w",  outType,err)
-				return
-			}
 		}
-	*/
-
-	rp.Charset = values.Get("_charset")
-	if rp.Charset == "" {
-		rp.Charset = r.Header.Get("Accept-Charset")
+		var err error
+		if outType, err = accepts.Negotiate("text/csv", "application/cbor", "application/json"); err != nil || outType == "" {
+			return rp, fmt.Errorf("bad Accept=%q: %w", outType, err)
+		}
 	}
-	var err error
-	if rp.Charset == "" {
-		rp.Charset = "utf-8"
-	} else if rp.Charset, err = accept.Parse(rp.Charset).Negotiate("utf-8", "iso-8859-2"); err != nil || rp.Charset == "" {
-		logger.Error(err, "parse accept", "charset", rp.Charset)
-		if err == nil {
-			err = errors.New("unknown")
+	if outType == "" {
+		outType = "text/csv"
+	}
+
+	switch outType {
+	case "text/csv":
+		rp.Codec = CodecCSV
+		rp.Charset = values.Get("_charset")
+		if rp.Charset == "" {
+			rp.Charset = r.Header.Get("Accept-Charset")
 		}
-		return rp, fmt.Errorf("bad charset %q: %w", rp.Charset, err)
+		var err error
+		if rp.Charset == "" {
+			rp.Charset = "utf-8"
+		} else if rp.Charset, err = accept.Parse(rp.Charset).Negotiate("utf-8", "iso-8859-2"); err != nil || rp.Charset == "" {
+			logger.Error(err, "parse accept", "charset", rp.Charset)
+			if err == nil {
+				err = errors.New("unknown")
+			}
+			return rp, fmt.Errorf("bad charset %q: %w", rp.Charset, err)
+		}
+
+	case "application/cbor":
+		rp.Codec = CodecCBOR
+
+	case "application/json":
+		rp.Codec = CodecJSON
+
+	default:
+		return rp, fmt.Errorf("%q: %w", outType, ErrUnknownCodec)
 	}
 	return rp, nil
 }

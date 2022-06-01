@@ -5,6 +5,7 @@ go 1.15
 require (
 	github.com/UNO-SOFT/ulog v1.3.1
 	github.com/dgrijalva/jwt-go v3.2.0+incompatible
+	github.com/fxamacker/cbor v1.5.1 // indirect
 	github.com/go-kit/kit v0.10.0
 	github.com/go-logr/logr v1.2.3 // indirect
 	github.com/go-logr/zerologr v1.2.1 // indirect
