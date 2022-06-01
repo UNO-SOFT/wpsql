@@ -123,7 +123,7 @@ func (m Client) QueryStrings(ctx context.Context, qry string, params ...string) 
 func (m Client) Query(ctx context.Context, qry string, params ...string) ([][]interface{}, error) {
 	var records [][]interface{}
 	err := m.QueryWalk(ctx, func(record []interface{}) error {
-		records = append(records, record)
+		records = append(records, append(make([]interface{}, 0, len(record)), record...))
 		return nil
 	},
 		qry, params...)
