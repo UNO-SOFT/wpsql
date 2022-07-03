@@ -1,4 +1,4 @@
-// Copyright 2021 Tamás Gulácsi. All rights reserved.
+// Copyright 2021, 2022 Tamás Gulácsi. All rights reserved.
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -15,8 +15,7 @@ import (
 	"strings"
 
 	"github.com/UNO-SOFT/wpsql/client"
-	"github.com/go-logr/zerologr"
-	"github.com/rs/zerolog"
+	"github.com/tgulacsi/go/zlog"
 
 	"github.com/peterbourgon/ff/v3/ffcli"
 	"gopkg.in/go-on/mannersagain.v1"
@@ -24,8 +23,7 @@ import (
 	"github.com/tgulacsi/go/globalctx"
 )
 
-var zl = zerolog.New(os.Stderr).With().Timestamp().Logger().Level(zerolog.InfoLevel)
-var logger = zerologr.New(&zl)
+var logger = zlog.New(zlog.MaybeConsoleWriter(os.Stderr))
 
 var (
 	dsnTemplate string
