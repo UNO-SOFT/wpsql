@@ -22,6 +22,7 @@ import (
 	"github.com/dgrijalva/jwt-go"
 	"github.com/fxamacker/cbor/v2"
 	"github.com/go-logr/logr"
+	"github.com/klauspost/compress/gzhttp"
 )
 
 // Client is a wpsql client.
@@ -178,6 +179,7 @@ func (m Client) post(ctx context.Context, values url.Values, askCBOR bool) (*htt
 	cl := m.Client
 	if cl == nil {
 		cl = http.DefaultClient
+		cl.Transport = gzhttp.Transport(cl.Transport)
 	}
 	resp, err := cl.Do(req)
 	if err != nil {
