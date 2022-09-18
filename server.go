@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -28,6 +29,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jackc/pgx/v5/tracelog"
 )
 
 func (srv server) restHandler(w http.ResponseWriter, r *http.Request) {
@@ -75,7 +77,8 @@ func (srv server) restHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("%q.%q", table, col), http.StatusNotFound)
 		return
 	}
-	qry = fmt.Sprintf("SELECT "+cols+"  FROM %q WHERE id = $1", table) //nolint:gas
+	// nosemgrep: go.lang.security.injection.tainted-sql-string.tainted-sql-string
+	qry = "SELECT " + cols + "  FROM " + strconv.Quote(table) + " WHERE id = $1" //nolint:gas
 	rows, err := conn.Query(ctx, qry, path[2])
 	if err != nil {
 		logger.Error(err, "select", qry, "path", path[2])
@@ -136,6 +139,7 @@ func (srv server) queryHandler(w http.ResponseWriter, r *http.Request) {
     <p>
       <select name="_db">`+"\n")
 		for _, nm := range srv.Databases {
+			// nosemgrep: go.lang.security.audit.xss.no-fprintf-to-responsewriter.no-fprintf-to-responsewriter
 			_, _ = fmt.Fprintf(w, "        <option>%s</option>\n", nm)
 		}
 		_, _ = io.WriteString(w, `
@@ -172,12 +176,13 @@ func (srv server) queryHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	logger.V(1).Info("parsing", "request", r)
-	var err error
-	if req.Config, err = getReqConfig(r); err != nil {
+	config, err := getReqConfig(r)
+	if err != nil {
 		logger.Error(err, "getReqConfig")
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	req.Config = config
 	var ok bool
 	if req.Params, ok = r.Form["_param"]; !ok {
 	FormLoop:
@@ -211,6 +216,7 @@ func (srv server) queryHandler(w http.ResponseWriter, r *http.Request) {
 	defer closer.Close()
 	if rows == nil {
 		w.Header().Set("Content-Type", `text/csv; charset="`+req.Config.Charset+`"`)
+		// nosemgrep: go.lang.security.audit.xss.no-fprintf-to-responsewriter.no-fprintf-to-responsewriter
 		fmt.Fprintf(w, "%d", affected)
 		return
 	}
@@ -604,10 +610,11 @@ func getReqConfig(r *http.Request) (requestConfig, error) {
 		if rp.Charset == "" {
 			rp.Charset = r.Header.Get("Accept-Charset")
 		}
-		var err error
 		if rp.Charset == "" {
 			rp.Charset = "utf-8"
-		} else if rp.Charset, err = accept.Parse(rp.Charset).Negotiate("utf-8", "iso-8859-2"); err != nil || rp.Charset == "" {
+		} else if cs, err := accept.Parse(rp.Charset).Negotiate("utf-8", "iso-8859-2"); err == nil && cs != "" {
+			rp.Charset = cs
+		} else {
 			logger.Error(err, "parse accept", "charset", rp.Charset)
 			if err == nil {
 				err = errors.New("unknown")
@@ -653,18 +660,23 @@ func connect(ctx context.Context, db string) (*pgxpool.Conn, error) {
 	if err != nil {
 		return nil, err
 	}
-	cfg.ConnConfig.Logger = pgxLogger{Logger: logger.V(1)}
+	cfg.ConnConfig.Tracer = &tracelog.TraceLog{
+		Logger:   pgxLogger{Logger: logger.V(1)},
+		LogLevel: tracelog.LogLevelInfo,
+	}
 
-	if pool, err = pgxpool.ConnectConfig(ctx, cfg); err != nil {
+	if pool, err = pgxpool.NewWithConfig(ctx, cfg); err != nil {
 		return nil, err
 	}
 	dbs[db] = pool
 	return pool.Acquire(ctx)
 }
 
+var _ tracelog.Logger = pgxLogger{}
+
 type pgxLogger struct{ logr.Logger }
 
-func (p pgxLogger) Log(ctx context.Context, level pgx.LogLevel, msg string, data map[string]interface{}) {
+func (p pgxLogger) Log(ctx context.Context, level tracelog.LogLevel, msg string, data map[string]interface{}) {
 	keyvals := make([]interface{}, 0, len(data))
 	for k, v := range data {
 		keyvals = append(keyvals, k, v)
