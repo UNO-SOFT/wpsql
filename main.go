@@ -15,7 +15,7 @@ import (
 	"strings"
 
 	"github.com/UNO-SOFT/wpsql/client"
-	"github.com/tgulacsi/go/zlog"
+	"github.com/UNO-SOFT/zlog"
 
 	"github.com/peterbourgon/ff/v3/ffcli"
 	"gopkg.in/go-on/mannersagain.v1"
