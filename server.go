@@ -661,7 +661,7 @@ func connect(ctx context.Context, db string) (*pgxpool.Conn, error) {
 		return nil, err
 	}
 	cfg.ConnConfig.Tracer = &tracelog.TraceLog{
-		Logger:   pgxLogger{Logger: logger.V(1)},
+		Logger:   pgxLogger{Logger: logger.AsLogr().V(1)},
 		LogLevel: tracelog.LogLevelInfo,
 	}
 

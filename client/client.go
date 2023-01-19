@@ -1,4 +1,4 @@
-// Copyright 2021, 2022 Tamás Gulácsi. All rights reserved.
+// Copyright 2021, 2023 Tamás Gulácsi. All rights reserved.
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -96,6 +96,9 @@ func (m Client) QueryWalk(ctx context.Context, callback func([]interface{}) erro
 		if err := ctx.Err(); err != nil {
 			return err
 		}
+		for i := range row {
+			row[i] = nil
+		}
 		if err := dec.Decode(&row); err != nil {
 			if errors.Is(err, io.EOF) {
 				return nil
@@ -111,10 +114,11 @@ func (m Client) QueryWalk(ctx context.Context, callback func([]interface{}) erro
 // QueryStrings returns the query's results as []string the database.
 func (m Client) QueryStrings(ctx context.Context, qry string, params ...string) ([][]string, error) {
 	var records [][]string
-	err := m.QueryStringsWalk(ctx, func(record []string) error {
-		records = append(records, append(make([]string, 0, len(record)), record...))
-		return nil
-	},
+	err := m.QueryStringsWalk(ctx,
+		func(record []string) error {
+			records = append(records, append(make([]string, 0, len(record)), record...))
+			return nil
+		},
 		qry, params...)
 	return records, err
 }
@@ -122,10 +126,11 @@ func (m Client) QueryStrings(ctx context.Context, qry string, params ...string) 
 // Query the database.
 func (m Client) Query(ctx context.Context, qry string, params ...string) ([][]interface{}, error) {
 	var records [][]interface{}
-	err := m.QueryWalk(ctx, func(record []interface{}) error {
-		records = append(records, append(make([]interface{}, 0, len(record)), record...))
-		return nil
-	},
+	err := m.QueryWalk(ctx,
+		func(record []interface{}) error {
+			records = append(records, append([]interface{}{}, record...))
+			return nil
+		},
 		qry, params...)
 	return records, err
 }

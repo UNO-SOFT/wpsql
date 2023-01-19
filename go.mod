@@ -3,11 +3,12 @@ module github.com/UNO-SOFT/wpsql
 go 1.15
 
 require (
-	github.com/UNO-SOFT/zlog v0.1.2
+	github.com/UNO-SOFT/zlog v0.2.5
 	github.com/dgrijalva/jwt-go v3.2.0+incompatible
 	github.com/fxamacker/cbor/v2 v2.4.0
 	github.com/go-logr/logr v1.2.3
-	github.com/jackc/pgx/v5 v5.0.0
+	github.com/jackc/pgx/v5 v5.2.0
+	github.com/jackc/puddle/v2 v2.1.2 // indirect
 	github.com/klauspost/compress v1.15.10
 	github.com/mattn/go-colorable v0.1.13 // indirect
 	github.com/peterbourgon/ff/v3 v3.3.0

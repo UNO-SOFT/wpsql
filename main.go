@@ -1,4 +1,4 @@
-// Copyright 2021, 2022 Tamás Gulácsi. All rights reserved.
+// Copyright 2021, 2023 Tamás Gulácsi. All rights reserved.
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -12,18 +12,17 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/signal"
 	"strings"
 
 	"github.com/UNO-SOFT/wpsql/client"
-	"github.com/UNO-SOFT/zlog"
+	"github.com/UNO-SOFT/zlog/v2"
 
 	"github.com/peterbourgon/ff/v3/ffcli"
 	"gopkg.in/go-on/mannersagain.v1"
-
-	"github.com/tgulacsi/go/globalctx"
 )
 
-var logger = zlog.New(zlog.MaybeConsoleWriter(os.Stderr))
+var logger = zlog.New(os.Stderr)
 
 var (
 	dsnTemplate string
@@ -71,7 +70,7 @@ func Main() error {
 	clientCmd := ffcli.Command{Name: "client", FlagSet: fs,
 		Exec: func(ctx context.Context, args []string) error {
 			if *flagClientVerbose {
-				m.Logger = logger
+				m.Logger = logger.AsLogr()
 			}
 			qry, params := strings.TrimSpace(args[0]), args[1:]
 			m.Secret = os.Getenv(pqUpdSecretEnv)
@@ -110,7 +109,7 @@ func Main() error {
 	}
 	dsnTemplate = "postgres://" + url.PathEscape(pqUser) + ":" + url.PathEscape(os.Getenv(pqPwEnv)) + "@" + pqHost + "/{{.Name}}?sslmode=" + sslmode
 
-	ctx, cancel := globalctx.Wrap(context.Background())
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 	return app.Run(ctx)
 }
