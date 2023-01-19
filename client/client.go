@@ -184,6 +184,9 @@ func (m Client) post(ctx context.Context, values url.Values, askCBOR bool) (*htt
 	cl := m.Client
 	if cl == nil {
 		cl = http.DefaultClient
+		if cl.Transport == nil {
+			cl.Transport = http.DefaultTransport
+		}
 		cl.Transport = gzhttp.Transport(cl.Transport)
 	}
 	resp, err := cl.Do(req)

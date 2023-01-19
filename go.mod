@@ -9,7 +9,7 @@ require (
 	github.com/go-logr/logr v1.2.3
 	github.com/jackc/pgx/v5 v5.2.0
 	github.com/jackc/puddle/v2 v2.1.2 // indirect
-	github.com/klauspost/compress v1.15.10
+	github.com/klauspost/compress v1.15.14
 	github.com/mattn/go-colorable v0.1.13 // indirect
 	github.com/peterbourgon/ff/v3 v3.3.0
 	github.com/tgulacsi/go v0.22.2
