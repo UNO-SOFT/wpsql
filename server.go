@@ -19,12 +19,14 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/exp/slog"
+
 	"github.com/UNO-SOFT/wpsql/internal"
 	"github.com/dgrijalva/jwt-go"
 	"github.com/fxamacker/cbor/v2"
-	"github.com/go-logr/logr"
 	"github.com/tgulacsi/go/text"
 	"github.com/timewasted/go-accept-headers"
+	//"github.com/UNO-SOFT/zlog/v2"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -45,7 +47,7 @@ func (srv server) restHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	rp, err := getReqConfig(r)
 	if err != nil {
-		logger.Error(err, "getReqConfig", "rp", rp)
+		logger.Error("getReqConfig", "rp", rp, "error", err)
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -68,7 +70,7 @@ func (srv server) restHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	qry := "SELECT COUNT(0) FROM information_schema.columns WHERE table_name = $1 AND column_name = $2"
 	if err = conn.QueryRow(ctx, qry, table, col).Scan(&n); err != nil {
-		logger.Error(err, "select", qry, "table", table, "col", col)
+		logger.Error( "select", qry, "table", table, "col", col, "error", err)
 		err = fmt.Errorf("%s: %w", qry, err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -81,7 +83,7 @@ func (srv server) restHandler(w http.ResponseWriter, r *http.Request) {
 	qry = "SELECT " + cols + "  FROM " + strconv.Quote(table) + " WHERE id = $1" //nolint:gas
 	rows, err := conn.Query(ctx, qry, path[2])
 	if err != nil {
-		logger.Error(err, "select", qry, "path", path[2])
+		logger.Error( "select", qry, "path", path[2], "error", err)
 		err = fmt.Errorf("%s: %w", qry, err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -89,7 +91,7 @@ func (srv server) restHandler(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 
 	if err = rp.writeRows(w, rows, table+".csv"); err != nil {
-		logger.Error(err, "writeRows")
+		logger.Error( "writeRows", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -122,7 +124,7 @@ func (srv server) queryHandler(w http.ResponseWriter, r *http.Request) {
 				s, err = base64.StdEncoding.DecodeString(req.Query)
 			}
 			if err != nil {
-				logger.Error(err, "decode", "q", req.Query)
+				logger.Error( "decode", "q", req.Query, "error", err)
 			} else {
 				req.Query = string(s)
 			}
@@ -175,10 +177,10 @@ func (srv server) queryHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("bad db name (%q)", req.DB), http.StatusBadRequest)
 		return
 	}
-	logger.V(1).Info("parsing", "request", r)
+	logger.Debug("parsing", "request", r)
 	config, err := getReqConfig(r)
 	if err != nil {
-		logger.Error(err, "getReqConfig")
+		logger.Error( "getReqConfig", "error", err)
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -199,11 +201,11 @@ func (srv server) queryHandler(w http.ResponseWriter, r *http.Request) {
 			req.Params = append(req.Params, arr...)
 		}
 	}
-	logger.V(1).Info("req.Params", "params", req.Params)
+	logger.Debug("req.Params", "params", req.Params)
 
 	rows, affected, closer, err := req.Do(r.Context())
 	if err != nil {
-		logger.Error(err, "doQuery", "req", req)
+		logger.Error( "doQuery", "req", req, "error", err)
 		code := http.StatusInternalServerError
 		if errors.Is(err, ErrAccessDenied) {
 			code = 401
@@ -223,17 +225,17 @@ func (srv server) queryHandler(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 
 	if err := req.Config.writeRows(w, rows, "SELECT.csv"); err != nil {
-		logger.Error(err, "writeRows")
+		logger.Error("writeRows", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 }
 
 func (req queryRequest) Do(ctx context.Context) (rows pgx.Rows, affected int64, C io.Closer, err error) {
-	logger.V(1).Info("connecting", "db", req.DB)
+	logger.Debug("connecting", "db", req.DB)
 	conn, connErr := connect(ctx, req.DB)
 	if connErr != nil {
-		logger.Error(connErr, "connect", "db", req.DB)
+		logger.Error("connect", "db", req.DB, "error", connErr, )
 		return nil, 0, nil, fmt.Errorf("connecting to %s: %w", req.DB, connErr)
 	}
 	tbc := append(make([]func() error, 0, 4), func() error { conn.Release(); return nil })
@@ -258,10 +260,10 @@ func (req queryRequest) Do(ctx context.Context) (rows pgx.Rows, affected int64, 
 	if updSecret != "" && req.JWT != "" {
 		accessMode = pgx.ReadWrite
 	}
-	logger.V(1).Info("BEGIN")
+	logger.Debug("BEGIN")
 	tx, err := conn.BeginTx(ctx, pgx.TxOptions{AccessMode: accessMode})
 	if err != nil {
-		logger.Error(err, "BEGIN")
+		logger.Error( "BEGIN", "error", err)
 		return nil, 0, nil, fmt.Errorf("begin: %w", err)
 	}
 	tbc = append(tbc, func() error { return tx.Rollback(context.Background()) })
@@ -532,18 +534,18 @@ func (rp requestConfig) writeRows(w io.Writer, rows pgx.Rows, fn string) error {
 	n := 0
 	for rows.Next() {
 		if err := rows.Scan(vals...); err != nil {
-			logger.Error(err, "scan", "vals", vals)
+			logger.Error( "scan", "vals", vals, "error", err)
 			return err
 		}
 		for i, pv := range vals {
 			v := *(pv.(*interface{}))
 			if err := addCol(i, v); err != nil {
-				logger.Error(err, "addCol", "i", i, "value", v)
+				logger.Error( "addCol", "i", i, "value", v, "error", err)
 				return err
 			}
 		}
 		if err := writeRow(); err != nil {
-			logger.Error(err, "write")
+			logger.Error( "write", "error", err)
 			return err
 		}
 		n++
@@ -569,7 +571,7 @@ func getReqConfig(r *http.Request) (requestConfig, error) {
 		values = r.Form
 	}
 	rp.Head = values.Get("_head") != "0"
-	logger.V(1).Info("getReqConfig", "head", rp.Head, "form", values)
+	logger.Debug("getReqConfig", "head", rp.Head, "form", values)
 
 	outType := values.Get("_accept")
 	if outType == "" {
@@ -615,7 +617,7 @@ func getReqConfig(r *http.Request) (requestConfig, error) {
 		} else if cs, err := accept.Parse(rp.Charset).Negotiate("utf-8", "iso-8859-2"); err == nil && cs != "" {
 			rp.Charset = cs
 		} else {
-			logger.Error(err, "parse accept", "charset", rp.Charset)
+			logger.Error( "parse accept", "charset", rp.Charset, "error", err)
 			if err == nil {
 				err = errors.New("unknown")
 			}
@@ -661,7 +663,7 @@ func connect(ctx context.Context, db string) (*pgxpool.Conn, error) {
 		return nil, err
 	}
 	cfg.ConnConfig.Tracer = &tracelog.TraceLog{
-		Logger:   pgxLogger{Logger: logger.AsLogr().V(1)},
+		Logger:   pgxLogger{Logger: logger},
 		LogLevel: tracelog.LogLevelInfo,
 	}
 
@@ -674,12 +676,12 @@ func connect(ctx context.Context, db string) (*pgxpool.Conn, error) {
 
 var _ tracelog.Logger = pgxLogger{}
 
-type pgxLogger struct{ logr.Logger }
+type pgxLogger struct{ *slog.Logger }
 
 func (p pgxLogger) Log(ctx context.Context, level tracelog.LogLevel, msg string, data map[string]interface{}) {
 	keyvals := make([]interface{}, 0, len(data))
 	for k, v := range data {
 		keyvals = append(keyvals, k, v)
 	}
-	p.Logger.V(int(level)-3).Info(msg, keyvals...)
+	p.Logger.Log(ctx, slog.Level(3-level), msg, keyvals...)
 }

@@ -22,7 +22,8 @@ import (
 	"gopkg.in/go-on/mannersagain.v1"
 )
 
-var logger = zlog.New(os.Stderr)
+var verbose zlog.VerboseVar
+var logger = zlog.NewLogger(zlog.MaybeConsoleHandler(&verbose, os.Stderr)).SLog()
 
 var (
 	dsnTemplate string
@@ -31,7 +32,7 @@ var (
 
 func main() {
 	if err := Main(); err != nil {
-		logger.Error(err, "main")
+		logger.Error("main", "error", err)
 		os.Exit(1)
 	}
 }
@@ -66,11 +67,11 @@ func Main() error {
 	fs = flag.NewFlagSet("client", flag.ContinueOnError)
 	fs.StringVar(&m.URL, "server", "http://192.168.1.1:45432", "address of the wpsql server")
 	fs.StringVar(&m.DB, "db", "", "database")
-	flagClientVerbose := fs.Bool("v", false, "verbose logging")
+	fs.Var(&verbose, "v", "verbose logging")
 	clientCmd := ffcli.Command{Name: "client", FlagSet: fs,
 		Exec: func(ctx context.Context, args []string) error {
-			if *flagClientVerbose {
-				m.Logger = logger.AsLogr()
+			if verbose != 0 {
+				m.Logger = logger
 			}
 			qry, params := strings.TrimSpace(args[0]), args[1:]
 			m.Secret = os.Getenv(pqUpdSecretEnv)

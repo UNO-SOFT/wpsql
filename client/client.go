@@ -18,10 +18,11 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/exp/slog"
+
 	"github.com/UNO-SOFT/wpsql/internal"
 	"github.com/dgrijalva/jwt-go"
 	"github.com/fxamacker/cbor/v2"
-	"github.com/go-logr/logr"
 	"github.com/klauspost/compress/gzhttp"
 )
 
@@ -30,7 +31,7 @@ import (
 // DB is the target database.
 // Secretus needed for data modification only.
 type Client struct {
-	logr.Logger
+	*slog.Logger
 	*http.Client
 	URL, DB, Secret string
 }
@@ -149,7 +150,7 @@ func (m Client) Exec(ctx context.Context, qry string, params ...string) error {
 	// Sign and get the complete encoded token as a string
 	tokenString, err := token.SignedString([]byte(m.Secret))
 	if err != nil {
-		m.Error(err, "SignedString", "secret", len(m.Secret))
+		m.Error("SignedString", "secret", len(m.Secret), "error", err)
 		return err
 	}
 	values := url.Values(map[string][]string{
@@ -171,7 +172,7 @@ func (m Client) Exec(ctx context.Context, qry string, params ...string) error {
 }
 
 func (m Client) post(ctx context.Context, values url.Values, askCBOR bool) (*http.Response, error) {
-	m.V(1).Info("post", "values", values)
+	m.Debug("post", "values", values)
 	vs := values.Encode()
 	req, err := http.NewRequestWithContext(ctx, "POST", m.URL, strings.NewReader(vs))
 	if err != nil {
@@ -191,7 +192,7 @@ func (m Client) post(ctx context.Context, values url.Values, askCBOR bool) (*htt
 	}
 	resp, err := cl.Do(req)
 	if err != nil {
-		m.Error(err, "PostForm")
+		m.Error("PostForm", "error", err)
 		if req, err = http.NewRequestWithContext(ctx, "GET", m.URL+"?"+vs, nil); err != nil {
 			return nil, err
 		}
@@ -224,7 +225,7 @@ func (m Client) prepareQry(qry string, params []string) (string, []string) {
 			flattened = append(flattened, v)
 		}
 	}
-	m.V(1).Info("prepareQry", "qry", qry)
+	m.Debug("prepareQry", "qry", qry)
 	return qry, flattened
 }
 
