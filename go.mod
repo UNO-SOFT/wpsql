@@ -5,7 +5,7 @@ go 1.21
 toolchain go1.21.0
 
 require (
-	github.com/UNO-SOFT/zlog v0.7.3
+	github.com/UNO-SOFT/zlog v0.7.4
 	github.com/dgrijalva/jwt-go v3.2.0+incompatible
 	github.com/fxamacker/cbor/v2 v2.4.0
 	github.com/jackc/pgx/v5 v5.4.3
