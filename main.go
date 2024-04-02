@@ -58,7 +58,7 @@ func Main() error {
 					srv.Databases = append(srv.Databases, nm)
 				}
 			}
-			aliases := strings.FieldsFunc(*flagAliases, func(r rune) bool { return r != '=' && !unicode.IsLetter(r) && !unicode.IsDigit(r) })
+			aliases := strings.FieldsFunc(*flagAliases, func(r rune) bool { return r == ',' || unicode.IsSpace(r) })
 			logger.Debug("aliases", "flag", *flagAliases, "split", aliases)
 			if len(aliases) != 0 {
 				srv.aliases = make(map[string]string, len(aliases))
