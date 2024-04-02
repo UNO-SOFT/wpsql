@@ -47,6 +47,7 @@ func Main() error {
 	flagHTTP := fs.String("http", "0.0.0.0:45432", "address to listen on")
 	flagDatabases := fs.String("databases", "", "a comma-separated list of databases to offer")
 	flagRestEP := fs.String("rest-endpoint", "/api/v1/mantis/", "REST endpoint")
+	flagAliases := fs.String("aliases", "", "alias=db,alias2=db")
 	serveCmd := ffcli.Command{Name: "serve", FlagSet: fs,
 		Exec: func(ctx context.Context, args []string) error {
 			var srv server
@@ -55,6 +56,17 @@ func Main() error {
 					srv.Databases = append(srv.Databases, nm)
 				}
 			}
+			aliases := strings.Split(*flagAliases, ",")
+			if len(aliases) != 0 {
+				srv.aliases = make(map[string]string, len(aliases))
+				for _, vv := range aliases {
+					k, v, ok := strings.Cut(vv, ",")
+					if ok {
+						srv.aliases[strings.ToLower(k)] = v
+					}
+				}
+			}
+
 			http.Handle(*flagRestEP, http.StripPrefix(*flagRestEP, http.HandlerFunc(srv.restHandler)))
 			http.HandleFunc("/", srv.queryHandler)
 			logger.Info("serving", "address", *flagHTTP,

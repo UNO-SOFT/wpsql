@@ -51,7 +51,7 @@ func (srv server) restHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	db := path[0]
+	db := srv.remapDBName(path[0])
 	ctx := r.Context()
 	conn, err := connect(ctx, db)
 	if err != nil {
@@ -109,6 +109,17 @@ var (
 
 type server struct {
 	Databases []string
+	aliases   map[string]string
+}
+
+func (srv server) remapDBName(db string) string {
+	if srv.aliases == nil {
+		return db
+	}
+	if other := srv.aliases[strings.ToLower(db)]; other != "" {
+		return other
+	}
+	return db
 }
 
 func (srv server) queryHandler(w http.ResponseWriter, r *http.Request) {
@@ -176,6 +187,7 @@ func (srv server) queryHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("bad db name (%q)", req.DB), http.StatusBadRequest)
 		return
 	}
+	req.DB = srv.remapDBName(req.DB)
 	logger.Debug("parsing", "request", r)
 	config, err := getReqConfig(r)
 	if err != nil {
