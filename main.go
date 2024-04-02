@@ -9,11 +9,13 @@ import (
 	"encoding/csv"
 	"flag"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
 	"os/signal"
 	"strings"
+	"unicode"
 
 	"github.com/UNO-SOFT/wpsql/client"
 	"github.com/UNO-SOFT/zlog/v2"
@@ -22,7 +24,7 @@ import (
 	"gopkg.in/go-on/mannersagain.v1"
 )
 
-var verbose zlog.VerboseVar
+var verbose zlog.VerboseVar = 1
 var logger = zlog.NewLogger(zlog.MaybeConsoleHandler(&verbose, os.Stderr)).SLog()
 
 var (
@@ -56,11 +58,13 @@ func Main() error {
 					srv.Databases = append(srv.Databases, nm)
 				}
 			}
-			aliases := strings.Split(*flagAliases, ",")
+			aliases := strings.FieldsFunc(*flagAliases, func(r rune) bool { return r != '=' && !unicode.IsLetter(r) && !unicode.IsDigit(r) })
+			logger.Debug("aliases", "flag", *flagAliases, "split", aliases)
 			if len(aliases) != 0 {
 				srv.aliases = make(map[string]string, len(aliases))
 				for _, vv := range aliases {
-					k, v, ok := strings.Cut(vv, ",")
+					k, v, ok := strings.Cut(vv, "=")
+					logger.Debug("cut", "vv", vv, "k", k, "v", v, "ok", ok)
 					if ok {
 						srv.aliases[strings.ToLower(k)] = v
 					}
@@ -69,8 +73,12 @@ func Main() error {
 
 			http.Handle(*flagRestEP, http.StripPrefix(*flagRestEP, http.HandlerFunc(srv.restHandler)))
 			http.HandleFunc("/", srv.queryHandler)
-			logger.Info("serving", "address", *flagHTTP,
-				"REST endpoint", *flagRestEP, "databases", srv.Databases)
+			logger.Info("serving",
+				slog.String("address", *flagHTTP),
+				slog.String("REST endpoint", *flagRestEP),
+				"databases", srv.Databases,
+				"aliases", srv.aliases,
+			)
 			return mannersagain.ListenAndServe(*flagHTTP, nil)
 		},
 	}
@@ -103,6 +111,7 @@ func Main() error {
 	fs.StringVar(&pqPwEnv, "pwenv", "PGPASSW", "name of the environment variable of the user password")
 	fs.StringVar(&pqHost, "db-host", "127.0.0.1", "database host")
 	fs.StringVar(&pqUpdSecretEnv, "update-secret-env", "UPDATE_SECRET", "name of the environment variable of the secret to update requests")
+	fs.Var(&verbose, "v", "verbosity")
 
 	app := ffcli.Command{Name: "wpsql", FlagSet: fs,
 		Exec: func(ctx context.Context, args []string) error {
