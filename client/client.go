@@ -23,6 +23,7 @@ import (
 	"github.com/dgrijalva/jwt-go"
 	"github.com/fxamacker/cbor/v2"
 	"github.com/klauspost/compress/gzhttp"
+	"github.com/tgulacsi/go/iohlp"
 )
 
 // Client is a wpsql client.
@@ -56,9 +57,12 @@ func (m Client) QueryStringsWalk(ctx context.Context, callback func([]string) er
 	if resp.Body != nil {
 		defer resp.Body.Close()
 	}
+	sr, err := iohlp.MakeSectionReader(resp.Body, 1<<20)
+	if err != nil {
+		return fmt.Errorf("read response: %w", err)
+	}
 
-	tr := &tailReader{Reader: resp.Body}
-	cr := csv.NewReader(tr)
+	cr := csv.NewReader(sr)
 	cr.ReuseRecord = false
 	for {
 		if err := ctx.Err(); err != nil {
@@ -69,7 +73,7 @@ func (m Client) QueryStringsWalk(ctx context.Context, callback func([]string) er
 			if errors.Is(err, io.EOF) {
 				return nil
 			}
-			return fmt.Errorf("%q: %w", tr.Tail, err)
+			return fmt.Errorf("%w", err)
 		}
 		if err = callback(record); err != nil {
 			return err
@@ -88,9 +92,12 @@ func (m Client) QueryWalk(ctx context.Context, callback func([]interface{}) erro
 	if resp.Body != nil {
 		defer resp.Body.Close()
 	}
+	sr, err := iohlp.MakeSectionReader(resp.Body, 1<<20)
+	if err != nil {
+		return fmt.Errorf("read response: %w", err)
+	}
 
-	tr := &tailReader{Reader: resp.Body}
-	dec := cbor.NewDecoder(tr)
+	dec := cbor.NewDecoder(sr)
 	row := make([]interface{}, strings.Count(resp.Header.Get("Csv-Header"), ","))
 	for {
 		if err := ctx.Err(); err != nil {
@@ -103,7 +110,7 @@ func (m Client) QueryWalk(ctx context.Context, callback func([]interface{}) erro
 			if errors.Is(err, io.EOF) {
 				return nil
 			}
-			return fmt.Errorf("%q: %w", tr.Tail, err)
+			return fmt.Errorf("%w", err)
 		}
 		if err := callback(row); err != nil {
 			return err
@@ -226,20 +233,6 @@ func (m Client) prepareQry(qry string, params []string) (string, []string) {
 	}
 	m.Debug("prepareQry", "qry", qry)
 	return qry, flattened
-}
-
-// tailReader is a reader that remembers the last read block.
-type tailReader struct {
-	io.Reader
-	Tail []byte
-}
-
-func (tr *tailReader) Read(p []byte) (int, error) {
-	n, err := tr.Reader.Read(p)
-	if n != 0 {
-		tr.Tail = append(tr.Tail[:0], p[:n]...)
-	}
-	return n, err
 }
 
 // vim: set fileencoding=utf-8:
