@@ -22,7 +22,6 @@ import (
 	"github.com/UNO-SOFT/wpsql/internal"
 	"github.com/dgrijalva/jwt-go"
 	"github.com/fxamacker/cbor/v2"
-	"github.com/klauspost/compress/gzhttp"
 	"github.com/tgulacsi/go/iohlp"
 )
 
@@ -61,11 +60,19 @@ func (m Client) QueryStringsWalk(ctx context.Context, callback func([]string) er
 	if err != nil {
 		return fmt.Errorf("read response: %w", err)
 	}
+	m.Logger.Info("response", "length", sr.Size())
+	if m.Logger.Enabled(ctx, slog.LevelDebug) {
+		var buf strings.Builder
+		buf.Grow(int(sr.Size()))
+		io.Copy(&buf, io.NewSectionReader(sr, 0, sr.Size()))
+		m.Logger.Info("response", "body", buf.String())
+	}
 
 	cr := csv.NewReader(sr)
 	cr.ReuseRecord = false
 	for {
 		if err := ctx.Err(); err != nil {
+			m.Logger.Error("context", "error", err)
 			return err
 		}
 		record, err := cr.Read()
@@ -73,9 +80,12 @@ func (m Client) QueryStringsWalk(ctx context.Context, callback func([]string) er
 			if errors.Is(err, io.EOF) {
 				return nil
 			}
+			m.Logger.Error("read csv", "error", err)
 			return fmt.Errorf("%w", err)
 		}
+		m.Logger.Debug("callback", "record", record)
 		if err = callback(record); err != nil {
+			m.Logger.Error("csv callback", "error", err)
 			return err
 		}
 	}
@@ -191,10 +201,6 @@ func (m Client) post(ctx context.Context, values url.Values, askCBOR bool) (*htt
 	cl := m.Client
 	if cl == nil {
 		cl = http.DefaultClient
-		if cl.Transport == nil {
-			cl.Transport = http.DefaultTransport
-		}
-		cl.Transport = gzhttp.Transport(cl.Transport)
 	}
 	resp, err := cl.Do(req)
 	if err != nil {
