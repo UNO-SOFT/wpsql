@@ -25,6 +25,7 @@ import (
 	"github.com/fxamacker/cbor/v2"
 	"github.com/tgulacsi/go/text"
 	"github.com/timewasted/go-accept-headers"
+
 	//"github.com/UNO-SOFT/zlog/v2"
 
 	"github.com/jackc/pgx/v5"
@@ -33,25 +34,76 @@ import (
 	"github.com/jackc/pgx/v5/tracelog"
 )
 
-func (srv server) restHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != "GET" {
-		http.Error(w, "only GET", http.StatusMethodNotAllowed)
+func newServer(databases []string, aliases map[string]string, restEP string) server {
+	srv := server{
+		databases: databases, aliases: aliases, mux: new(http.ServeMux),
+	}
+	var rest http.ServeMux
+	rest.HandleFunc("GET /{db}/{table}/{id}", srv.restHandleDB)
+	rest.HandleFunc("GET /{db}/{table}/{id}/{cols...}", srv.restHandleDB)
+	if restEP == "" {
+		restEP = "/api/v1/mantis"
+	}
+	srv.mux.Handle(restEP, http.StripPrefix(restEP, &rest))
+	srv.mux.HandleFunc("GET /{db}/issues/{id}/summary/", srv.getIssueSummary)
+	srv.mux.HandleFunc("PUT /{db}/issues/{id}/objektumok", srv.putIssueObjektumok)
+	srv.mux.HandleFunc("/", srv.queryHandler)
+	return srv
+}
+
+func (srv server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	srv.mux.ServeHTTP(w, r)
+}
+
+func (srv server) getIssueSummary(w http.ResponseWriter, r *http.Request) {
+	db := srv.remapDBName(r.PathValue("db"))
+	ctx := r.Context()
+	conn, err := connect(ctx, db)
+	if err != nil {
+		http.Error(w, "bad db "+db, http.StatusNotFound)
 		return
 	}
-	// /{db}/{table/{id}/{field}?
-	path := strings.SplitN(strings.TrimPrefix(r.URL.Path, "/"), "/", 4)
-	if len(path) < 3 {
-		http.Error(w, fmt.Sprintf("want db/table/id, got %q", path), http.StatusBadRequest)
+	defer conn.Release()
+	const qry = `SELECT summary FROM mantis_bug_table WHERE bug_id = $1::int`
+	var summary string
+	if err = conn.QueryRow(ctx, qry, r.PathValue("id")).Scan(&summary); err != nil {
+		http.Error(w, fmt.Sprintf("%s: %+v", qry, err), http.StatusInternalServerError)
 		return
 	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	io.WriteString(w, summary)
+}
+
+func (srv server) putIssueObjektumok(w http.ResponseWriter, r *http.Request) {
+	db := srv.remapDBName(r.PathValue("db"))
+	ctx := r.Context()
+	conn, err := connect(ctx, db)
+	if err != nil {
+		http.Error(w, "bad db "+db, http.StatusNotFound)
+		return
+	}
+	defer conn.Release()
+	const qry = `INSERT INTO mantis_custom_field_string_table (field_id, bug_id, text)
+      (SELECT id, $1::int, $2, FROM mantis_custom_field_table WHERE name = 'objektumok')
+      ON CONFLICT (field_id, bug_id) DO UPDATE SET text = EXCLUDED.text`
+	var buf strings.Builder
+	if _, err := io.Copy(&buf, r.Body); err != nil {
+		http.Error(w, "read request body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if _, err = conn.Exec(ctx, qry, r.PathValue("id"), buf.String()); err != nil {
+		http.Error(w, fmt.Sprintf("%s: %+v", qry, err), http.StatusInternalServerError)
+	}
+}
+
+func (srv server) restHandleDB(w http.ResponseWriter, r *http.Request) {
 	rp, err := getReqConfig(r)
 	if err != nil {
 		logger.Error("getReqConfig", "rp", rp, "error", err)
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-
-	db := srv.remapDBName(path[0])
+	db := srv.remapDBName(r.PathValue("db"))
 	ctx := r.Context()
 	conn, err := connect(ctx, db)
 	if err != nil {
@@ -61,11 +113,14 @@ func (srv server) restHandler(w http.ResponseWriter, r *http.Request) {
 	defer conn.Release()
 
 	var n int64
-	table := "mantis_" + path[1] + "_table"
-	cols, col := "*", "id"
-	if len(path) > 3 && path[3] != "" {
-		col = path[3]
-		cols = path[3]
+	table := "mantis_" + r.PathValue("table") + "_table"
+	id := r.PathValue("id")
+	cols := r.PathValue("cols")
+	col := "id"
+	if cols == "" {
+		cols = "*"
+	} else {
+		col = cols
 	}
 	qry := "SELECT COUNT(0) FROM information_schema.columns WHERE table_name = $1 AND column_name = $2"
 	if err = conn.QueryRow(ctx, qry, table, col).Scan(&n); err != nil {
@@ -80,9 +135,9 @@ func (srv server) restHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	// nosemgrep: go.lang.security.injection.tainted-sql-string.tainted-sql-string
 	qry = "SELECT " + cols + "  FROM " + strconv.Quote(table) + " WHERE id = $1" //nolint:gas
-	rows, err := conn.Query(ctx, qry, path[2])
+	rows, err := conn.Query(ctx, qry, id)
 	if err != nil {
-		logger.Error("select", qry, "path", path[2], "error", err)
+		logger.Error("select", qry, "path", id, "error", err)
 		err = fmt.Errorf("%s: %w", qry, err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -108,8 +163,9 @@ var (
 )
 
 type server struct {
-	Databases []string
+	databases []string
 	aliases   map[string]string
+	mux       *http.ServeMux
 }
 
 func (srv server) remapDBName(db string) string {
@@ -150,7 +206,7 @@ func (srv server) queryHandler(w http.ResponseWriter, r *http.Request) {
   <form action="" method="POST">
     <p>
       <select name="_db">`+"\n")
-		for _, nm := range srv.Databases {
+		for _, nm := range srv.databases {
 			// nosemgrep: go.lang.security.audit.xss.no-fprintf-to-responsewriter.no-fprintf-to-responsewriter
 			_, _ = fmt.Fprintf(w, "        <option>%s</option>\n", nm)
 		}

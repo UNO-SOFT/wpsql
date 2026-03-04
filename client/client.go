@@ -33,6 +33,7 @@ type Client struct {
 	*slog.Logger
 	*http.Client
 	URL, DB, Secret string
+	BasicAuth
 }
 
 func (m Client) prepareQryWalk(qry string, params []string) url.Values {
@@ -194,6 +195,9 @@ func (m Client) post(ctx context.Context, values url.Values, askCBOR bool) (*htt
 	if err != nil {
 		return nil, err
 	}
+	if !m.BasicAuth.IsZero() {
+		req.SetBasicAuth(m.Username, m.Password)
+	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	if askCBOR {
 		req.Header.Set("Accept", "application/cbor")
@@ -241,4 +245,14 @@ func (m Client) prepareQry(qry string, params []string) (string, []string) {
 	return qry, flattened
 }
 
-// vim: set fileencoding=utf-8:
+type BasicAuth struct{ Username, Password string }
+
+func (ba BasicAuth) IsZero() bool { return ba.Username == "" && ba.Password == "" }
+func SplitBasicAuth(up string) (BasicAuth, error) {
+	var ba BasicAuth
+	var ok bool
+	if ba.Username, ba.Password, ok = strings.Cut(up, ":"); ok {
+		return ba, nil
+	}
+	return ba, fmt.Errorf("no : in %s", up)
+}
