@@ -23,7 +23,7 @@ import (
 	"github.com/peterbourgon/ff/v4"
 	"github.com/peterbourgon/ff/v4/ffhelp"
 	"github.com/tgulacsi/go/handler"
-	"gopkg.in/go-on/mannersagain.v1"
+	"github.com/tgulacsi/go/httpunix"
 )
 
 var (
@@ -102,7 +102,7 @@ func Main() error {
 			if u, p, ok := strings.Cut(basicAuth, ":"); ok && p != "" {
 				hndl = handler.BasicAuth(u, p, hndl)
 			}
-			return mannersagain.ListenAndServe(*flagHTTP, hndl)
+			return httpunix.ListenAndServe(ctx, *flagHTTP, hndl)
 		},
 	}
 
