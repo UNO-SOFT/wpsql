@@ -32,8 +32,64 @@ import (
 type Client struct {
 	*slog.Logger
 	*http.Client
-	URL, DB, Secret string
+	URL, DB, Secret, RestEP string
 	BasicAuth
+}
+
+func (m Client) GetSummary(ctx context.Context, issueID int) (string, error) {
+	req, err := http.NewRequestWithContext(ctx,
+		"GET",
+		fmt.Sprintf("%s/%s/issues/%d/summary", m.URL, m.DB, issueID),
+		nil)
+	if err != nil {
+		return "", err
+	}
+	if !m.BasicAuth.IsZero() {
+		req.SetBasicAuth(m.Username, m.Password)
+	}
+	req.Header.Set("Content-Type", "text/plain; charset=utf-8")
+	req.Header.Set("Accept", "text/plain")
+	cl := m.Client
+	if cl == nil {
+		cl = http.DefaultClient
+	}
+	resp, err := cl.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return "", errors.New(resp.Status)
+	}
+	b, err := io.ReadAll(resp.Body)
+	return string(b), err
+}
+
+func (m Client) PutObjektumok(ctx context.Context, issueID int, objektumok string) error {
+	req, err := http.NewRequestWithContext(ctx,
+		"PUT",
+		fmt.Sprintf("%s/%s/issues/%d/objektumok", m.URL, m.DB, issueID),
+		strings.NewReader(objektumok))
+	if err != nil {
+		return err
+	}
+	if !m.BasicAuth.IsZero() {
+		req.SetBasicAuth(m.Username, m.Password)
+	}
+	req.Header.Set("Content-Type", "text/plain; charset=utf-8")
+	cl := m.Client
+	if cl == nil {
+		cl = http.DefaultClient
+	}
+	resp, err := cl.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return errors.New(resp.Status)
+	}
+	return err
 }
 
 func (m Client) prepareQryWalk(qry string, params []string) url.Values {
@@ -94,7 +150,7 @@ func (m Client) QueryStringsWalk(ctx context.Context, callback func([]string) er
 
 // QueryWalk calls the given callback for each row.
 // It quits with the error if the callbacks returns an error.
-func (m Client) QueryWalk(ctx context.Context, callback func([]interface{}) error, qry string, params ...string) error {
+func (m Client) QueryWalk(ctx context.Context, callback func([]any) error, qry string, params ...string) error {
 	resp, err := m.post(ctx, m.prepareQryWalk(qry, params), true)
 	if err != nil {
 		return err
@@ -109,7 +165,7 @@ func (m Client) QueryWalk(ctx context.Context, callback func([]interface{}) erro
 	}
 
 	dec := cbor.NewDecoder(sr)
-	row := make([]interface{}, strings.Count(resp.Header.Get("Csv-Header"), ","))
+	row := make([]any, strings.Count(resp.Header.Get("Csv-Header"), ","))
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -142,11 +198,11 @@ func (m Client) QueryStrings(ctx context.Context, qry string, params ...string) 
 }
 
 // Query the database.
-func (m Client) Query(ctx context.Context, qry string, params ...string) ([][]interface{}, error) {
-	var records [][]interface{}
+func (m Client) Query(ctx context.Context, qry string, params ...string) ([][]any, error) {
+	var records [][]any
 	err := m.QueryWalk(ctx,
-		func(record []interface{}) error {
-			records = append(records, append([]interface{}{}, record...))
+		func(record []any) error {
+			records = append(records, append([]any{}, record...))
 			return nil
 		},
 		qry, params...)
@@ -158,7 +214,7 @@ func (m Client) Exec(ctx context.Context, qry string, params ...string) error {
 	qry, params = m.prepareQry(qry, params)
 	q64 := base64.URLEncoding.EncodeToString([]byte(qry))
 	token := jwt.NewWithClaims(jwt.SigningMethodHS512,
-		jwt.MapClaims(map[string]interface{}{
+		jwt.MapClaims(map[string]any{
 			"update": q64,
 			"params": internal.HashStrings(params),
 			"exp":    time.Now().Add(time.Minute * 1).Unix(),

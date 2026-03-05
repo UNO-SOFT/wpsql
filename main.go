@@ -26,13 +26,15 @@ import (
 	"gopkg.in/go-on/mannersagain.v1"
 )
 
-var verbose zlog.VerboseVar = 1
-var logger = zlog.NewLogger(zlog.MaybeConsoleHandler(&verbose, os.Stderr)).SLog()
-
 var (
+	verbose zlog.VerboseVar = 1
+	logger                  = zlog.NewLogger(zlog.MaybeConsoleHandler(&verbose, os.Stderr)).SLog()
+
 	dsnTemplate string
 	updSecret   string
 )
+
+const DefaultRestEP = "/api/v1/mantis/"
 
 func main() {
 	if err := Main(); err != nil {
@@ -45,18 +47,28 @@ func Main() error {
 	var (
 		pqUser, pqHost          string
 		pqPwEnv, pqUpdSecretEnv string
-		basicAuth               string
+		basicAuth, restEP       string
 		pqSSL                   bool
 	)
+	commonFS := ff.NewFlagSet("common")
+	commonFS.StringVar(&basicAuth, 0, "basic-auth", "", "HTTP Basic authentication (user:passw)")
+	commonFS.Value('v', "verbose", &verbose, "verbosity")
+
 	FS := ff.NewFlagSet("serve")
+	FS.SetParent(commonFS)
+	FS.StringVar(&pqUser, 0, "db-user", "mantis", "username to connect with")
+	FS.BoolVar(&pqSSL, 0, "db-ssl", "use ssl when connecting to DB?")
+	FS.StringVar(&pqPwEnv, 0, "pwenv", "PGPASSW", "name of the environment variable of the user password")
+	FS.StringVar(&pqHost, 0, "db-host", "127.0.0.1", "database host")
+	FS.StringVar(&pqUpdSecretEnv, 0, "update-secret-env", "UPDATE_SECRET", "name of the environment variable of the secret to update requests")
 	flagHTTP := FS.StringLong("http", "0.0.0.0:45432", "address to listen on")
 	flagDatabases := FS.StringLong("databases", "", "a comma-separated list of databases to offer")
-	flagRestEP := FS.StringLong("rest-endpoint", "/api/v1/mantis/", "REST endpoint")
+	FS.StringVar(&restEP, 0, "rest-endpoint", DefaultRestEP, "REST endpoint")
 	flagAliases := FS.StringLong("aliases", "", "alias=db,alias2=db")
 	serveCmd := ff.Command{Name: "serve", Flags: FS,
 		Exec: func(ctx context.Context, args []string) error {
 			var databases []string
-			for _, nm := range strings.Split(*flagDatabases, ",") {
+			for nm := range strings.SplitSeq(*flagDatabases, ",") {
 				if nm != "" {
 					databases = append(databases, nm)
 				}
@@ -78,11 +90,11 @@ func Main() error {
 				}
 			}
 			logger.Debug("aliases", "flag", *flagAliases, "split", aliases)
-			srv := newServer(databases, aliases, *flagRestEP)
+			srv := newServer(databases, aliases, restEP)
 
 			logger.Info("serving",
 				slog.String("address", *flagHTTP),
-				slog.String("REST endpoint", *flagRestEP),
+				slog.String("REST endpoint", restEP),
 				"databases", srv.databases,
 				"aliases", srv.aliases,
 			)
@@ -108,6 +120,7 @@ func Main() error {
 		}
 	}
 	FS = ff.NewFlagSet("client")
+	FS.SetParent(commonFS)
 	FS.StringVar(&m.URL, 0, "server", "http://lnx-web-uno.unosoft.dmz:45432", "address of the wpsql server")
 	FS.StringVar(&m.DB, 0, "db", m.DB, "database")
 	FS.Value('v', "verbose", &verbose, "verbose logging")
@@ -120,6 +133,7 @@ func Main() error {
 			if m.BasicAuth, err = client.SplitBasicAuth(basicAuth); err != nil {
 				return err
 			}
+			m.RestEP = restEP
 			qry, params := strings.TrimSpace(args[0]), args[1:]
 			m.Secret = os.Getenv(pqUpdSecretEnv)
 			if m.Secret != "" && len(qry) > 2 && strings.EqualFold(qry[:3], "UPD") {
@@ -135,13 +149,7 @@ func Main() error {
 	}
 
 	FS = ff.NewFlagSet("wpsql")
-	FS.StringVar(&pqUser, 0, "db-user", "mantis", "username to connect with")
-	FS.BoolVar(&pqSSL, 0, "db-ssl", "use ssl when connecting to DB?")
-	FS.StringVar(&pqPwEnv, 0, "pwenv", "PGPASSW", "name of the environment variable of the user password")
-	FS.StringVar(&pqHost, 0, "db-host", "127.0.0.1", "database host")
-	FS.StringVar(&pqUpdSecretEnv, 0, "update-secret-env", "UPDATE_SECRET", "name of the environment variable of the secret to update requests")
-	FS.StringVar(&basicAuth, 0, "basic-auth", "", "HTTP Basic authentication (user:passw)")
-	FS.Value('v', "verbose", &verbose, "verbosity")
+	FS.SetParent(commonFS)
 
 	app := ff.Command{Name: "wpsql", Flags: FS,
 		Exec: func(ctx context.Context, args []string) error {
@@ -158,6 +166,9 @@ func Main() error {
 		return err
 	}
 	updSecret = os.Getenv(pqUpdSecretEnv)
+	if restEP == "" {
+		restEP = DefaultRestEP
+	}
 
 	sslmode := "request"
 	if !pqSSL {

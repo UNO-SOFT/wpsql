@@ -42,10 +42,10 @@ func newServer(databases []string, aliases map[string]string, restEP string) ser
 	rest.HandleFunc("GET /{db}/{table}/{id}", srv.restHandleDB)
 	rest.HandleFunc("GET /{db}/{table}/{id}/{cols...}", srv.restHandleDB)
 	if restEP == "" {
-		restEP = "/api/v1/mantis"
+		restEP = DefaultRestEP
 	}
 	srv.mux.Handle(restEP, http.StripPrefix(restEP, &rest))
-	srv.mux.HandleFunc("GET /{db}/issues/{id}/summary/", srv.getIssueSummary)
+	srv.mux.HandleFunc("GET /{db}/issues/{id}/summary", srv.getIssueSummary)
 	srv.mux.HandleFunc("PUT /{db}/issues/{id}/objektumok", srv.putIssueObjektumok)
 	srv.mux.HandleFunc("/", srv.queryHandler)
 	return srv
