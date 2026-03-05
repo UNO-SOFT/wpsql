@@ -95,6 +95,7 @@ func Main() error {
 			logger.Info("serving",
 				slog.String("address", *flagHTTP),
 				slog.String("REST endpoint", restEP),
+				slog.String("basicAuth", basicAuth),
 				"databases", srv.databases,
 				"aliases", srv.aliases,
 			)
@@ -158,7 +159,7 @@ func Main() error {
 		Subcommands: []*ff.Command{&serveCmd, &clientCmd},
 	}
 
-	if err := app.Parse(os.Args[1:]); err != nil {
+	if err := app.Parse(os.Args[1:], ff.WithEnvVarPrefix("WPSQL")); err != nil {
 		ffhelp.Command(&app).WriteTo(os.Stderr)
 		if errors.Is(err, ff.ErrHelp) {
 			return nil

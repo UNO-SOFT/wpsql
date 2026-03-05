@@ -15,6 +15,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/http/httputil"
 	"strconv"
 	"strings"
 	"sync"
@@ -46,12 +47,21 @@ func newServer(databases []string, aliases map[string]string, restEP string) ser
 	}
 	srv.mux.Handle(restEP, http.StripPrefix(restEP, &rest))
 	srv.mux.HandleFunc("GET /{db}/issues/{id}/summary", srv.getIssueSummary)
+	srv.mux.HandleFunc("GET /{db}/issues/{id}/objektumok", srv.putIssueObjektumok)
 	srv.mux.HandleFunc("PUT /{db}/issues/{id}/objektumok", srv.putIssueObjektumok)
 	srv.mux.HandleFunc("/", srv.queryHandler)
 	return srv
 }
 
 func (srv server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	if logger.Enabled(ctx, slog.LevelDebug) {
+		b, err := httputil.DumpRequest(r, true)
+		if err != nil {
+			logger.Error("dump request", "error", err)
+		}
+		logger.Debug("dump", "request", string(b))
+	}
 	srv.mux.ServeHTTP(w, r)
 }
 
@@ -77,6 +87,17 @@ func (srv server) getIssueSummary(w http.ResponseWriter, r *http.Request) {
 func (srv server) putIssueObjektumok(w http.ResponseWriter, r *http.Request) {
 	db := srv.remapDBName(r.PathValue("db"))
 	ctx := r.Context()
+	var text string
+	if r.Method == "GET" {
+		text = r.URL.Query().Get("text")
+	} else {
+		var buf strings.Builder
+		if _, err := io.Copy(&buf, r.Body); err != nil {
+			http.Error(w, "read request body: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		text = buf.String()
+	}
 	conn, err := connect(ctx, db)
 	if err != nil {
 		http.Error(w, "bad db "+db, http.StatusNotFound)
@@ -92,17 +113,19 @@ func (srv server) putIssueObjektumok(w http.ResponseWriter, r *http.Request) {
 	const qry = `INSERT INTO mantis_custom_field_string_table (field_id, bug_id, text)
       (SELECT id, $1::int, $2 FROM mantis_custom_field_table WHERE name = 'objektumok')
       ON CONFLICT (field_id, bug_id) DO UPDATE SET text = EXCLUDED.text`
-	var buf strings.Builder
-	if _, err := io.Copy(&buf, r.Body); err != nil {
-		http.Error(w, "read request body: "+err.Error(), http.StatusBadRequest)
-		return
-	}
-	if _, err = tx.Exec(ctx, qry, r.PathValue("id"), buf.String()); err != nil {
-		http.Error(w, fmt.Sprintf("%s: %+v", qry, err), http.StatusInternalServerError)
-		return
-	}
-	if err := tx.Commit(ctx); err != nil {
-		http.Error(w, "COMMIT: "+err.Error(), http.StatusInternalServerError)
+	id := r.PathValue("id")
+	if err := func() error {
+		logger.Info("objektumok", "qry", qry, "id", id, "text", text)
+		if _, err = tx.Exec(ctx, qry, id, text); err != nil {
+			return fmt.Errorf("%s [%q, %q]: %w", qry, id, text, err)
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return fmt.Errorf("COMMIT: %w", err)
+		}
+		return nil
+	}(); err != nil {
+		logger.Error("objektumok", "error", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
 
