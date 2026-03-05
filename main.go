@@ -74,7 +74,7 @@ func Main() error {
 				}
 			}
 			var aliases map[string]string
-			if len(aliases) != 0 {
+			if *flagAliases != "" {
 				for vv := range strings.FieldsFuncSeq(
 					*flagAliases,
 					func(r rune) bool { return r == ',' || unicode.IsSpace(r) },
