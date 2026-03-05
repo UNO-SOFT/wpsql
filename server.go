@@ -83,16 +83,26 @@ func (srv server) putIssueObjektumok(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer conn.Release()
+	tx, err := conn.BeginTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadWrite})
+	if err != nil {
+		http.Error(w, "begin tx: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer tx.Rollback(context.Background())
 	const qry = `INSERT INTO mantis_custom_field_string_table (field_id, bug_id, text)
-      (SELECT id, $1::int, $2, FROM mantis_custom_field_table WHERE name = 'objektumok')
+      (SELECT id, $1::int, $2 FROM mantis_custom_field_table WHERE name = 'objektumok')
       ON CONFLICT (field_id, bug_id) DO UPDATE SET text = EXCLUDED.text`
 	var buf strings.Builder
 	if _, err := io.Copy(&buf, r.Body); err != nil {
 		http.Error(w, "read request body: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	if _, err = conn.Exec(ctx, qry, r.PathValue("id"), buf.String()); err != nil {
+	if _, err = tx.Exec(ctx, qry, r.PathValue("id"), buf.String()); err != nil {
 		http.Error(w, fmt.Sprintf("%s: %+v", qry, err), http.StatusInternalServerError)
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
+		http.Error(w, "COMMIT: "+err.Error(), http.StatusInternalServerError)
 	}
 }
 
@@ -335,9 +345,9 @@ func (req queryRequest) Do(ctx context.Context) (rows pgx.Rows, affected int64, 
 	}
 	tbc = append(tbc, func() error { return tx.Rollback(context.Background()) })
 
-	paramsS := make([]interface{}, len(req.Params))
+	paramsS := make([]any, len(req.Params))
 	for i, s := range req.Params {
-		paramsS[i] = interface{}(s)
+		paramsS[i] = any(s)
 	}
 
 	if accessMode != pgx.ReadOnly {
@@ -351,7 +361,7 @@ func (req queryRequest) Do(ctx context.Context) (rows pgx.Rows, affected int64, 
 
 		token, parseErr := jwt.Parse(
 			given,
-			func(token *jwt.Token) (interface{}, error) {
+			func(token *jwt.Token) (any, error) {
 				// Don't forget to validate the alg is what you expect:
 				if sm, ok := token.Method.(*jwt.SigningMethodHMAC); !ok || sm.Alg() != jwt.SigningMethodHS512.Alg() {
 					return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
@@ -430,12 +440,12 @@ func (rp requestConfig) writeRows(w io.Writer, rows pgx.Rows, fn string) error {
 		rw.Header().Set("Content-Disposition", fmt.Sprintf("inline; filename=%q", fn))
 	}
 	logger.Info("writeRows", "contentType", ct)
-	vals := make([]interface{}, len(cols))
+	vals := make([]any, len(cols))
 	for i := range vals {
-		vals[i] = new(interface{})
+		vals[i] = new(any)
 	}
 
-	var addCol func(i int, v interface{}) error
+	var addCol func(i int, v any) error
 	var writeRow func() error
 	switch rp.Codec {
 	case CodecCSV:
@@ -460,7 +470,7 @@ func (rp requestConfig) writeRows(w io.Writer, rows pgx.Rows, fn string) error {
 			}
 			return nil
 		}
-		addCol = func(i int, v interface{}) error {
+		addCol = func(i int, v any) error {
 			if v == nil {
 				strs[i] = ""
 				return nil
@@ -529,7 +539,7 @@ func (rp requestConfig) writeRows(w io.Writer, rows pgx.Rows, fn string) error {
 		}
 
 	case CodecCBOR, CodecJSON:
-		var enc interface{ Encode(interface{}) error }
+		var enc interface{ Encode(any) error }
 		switch rp.Codec {
 		case CodecCBOR:
 			enc = cbor.NewEncoder(w)
@@ -541,8 +551,8 @@ func (rp requestConfig) writeRows(w io.Writer, rows pgx.Rows, fn string) error {
 				return err
 			}
 		}
-		row := make([]interface{}, len(cols))
-		addCol = func(i int, v interface{}) error {
+		row := make([]any, len(cols))
+		addCol = func(i int, v any) error {
 			row[i] = nil
 			switch x := v.(type) {
 			case pgtype.Bool:
@@ -605,7 +615,7 @@ func (rp requestConfig) writeRows(w io.Writer, rows pgx.Rows, fn string) error {
 			return err
 		}
 		for i, pv := range vals {
-			v := *(pv.(*interface{}))
+			v := *(pv.(*any))
 			if err := addCol(i, v); err != nil {
 				logger.Error("addCol", "i", i, "value", v, "error", err)
 				return err
@@ -745,8 +755,8 @@ var _ tracelog.Logger = pgxLogger{}
 
 type pgxLogger struct{ *slog.Logger }
 
-func (p pgxLogger) Log(ctx context.Context, level tracelog.LogLevel, msg string, data map[string]interface{}) {
-	keyvals := make([]interface{}, 0, len(data))
+func (p pgxLogger) Log(ctx context.Context, level tracelog.LogLevel, msg string, data map[string]any) {
+	keyvals := make([]any, 0, len(data))
 	for k, v := range data {
 		keyvals = append(keyvals, k, v)
 	}
