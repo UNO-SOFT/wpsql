@@ -64,7 +64,7 @@ func (srv server) getIssueSummary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer conn.Release()
-	const qry = `SELECT summary FROM mantis_bug_table WHERE bug_id = $1::int`
+	const qry = `SELECT summary FROM mantis_bug_table WHERE id = $1::int`
 	var summary string
 	if err = conn.QueryRow(ctx, qry, r.PathValue("id")).Scan(&summary); err != nil {
 		http.Error(w, fmt.Sprintf("%s: %+v", qry, err), http.StatusInternalServerError)
