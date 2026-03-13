@@ -26,3 +26,5 @@ require (
 	golang.org/x/term v0.32.0 // indirect
 	golang.org/x/text v0.29.0 // indirect
 )
+
+replace github.com/peterbourgon/ff/v4 v4.0.0-beta.1 => github.com/UNO-SOFT/ff/v4 v4.0.0-beta.1.us
