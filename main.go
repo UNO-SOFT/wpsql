@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/csv"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/url"
@@ -100,8 +101,11 @@ func Main() error {
 				"aliases", srv.aliases,
 			)
 			hndl := handler.CompressHandler(srv)
-			if u, p, ok := strings.Cut(basicAuth, ":"); ok && p != "" {
-				hndl = handler.BasicAuth(u, p, hndl)
+			if basicAuth != "" {
+				if u, p, ok := strings.Cut(basicAuth, ":"); ok && p != "" {
+					logger.Warn("BasicAuth", "u", u, "p", p)
+					hndl = handler.BasicAuth(u, p, hndl)
+				}
 			}
 			return httpunix.ListenAndServe(ctx, *flagHTTP, hndl)
 		},
@@ -124,15 +128,16 @@ func Main() error {
 	FS.SetParent(commonFS)
 	FS.StringVar(&m.URL, 0, "server", "http://lnx-web-uno.unosoft.dmz:45432", "address of the wpsql server")
 	FS.StringVar(&m.DB, 0, "db", m.DB, "database")
-	FS.Value('v', "verbose", &verbose, "verbose logging")
 	clientCmd := ff.Command{Name: "client", Flags: FS,
 		Exec: func(ctx context.Context, args []string) error {
 			if verbose != 0 {
 				m.Logger = logger
 			}
 			var err error
-			if m.BasicAuth, err = client.SplitBasicAuth(basicAuth); err != nil {
-				return err
+			if basicAuth != "" {
+				if m.BasicAuth, err = client.SplitBasicAuth(basicAuth); err != nil {
+					return fmt.Errorf("SplitBasicAuth: %w", err)
+				}
 			}
 			m.RestEP = restEP
 			qry, params := strings.TrimSpace(args[0]), args[1:]
