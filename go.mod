@@ -1,6 +1,6 @@
 module github.com/UNO-SOFT/wpsql
 
-go 1.24.0
+go 1.26
 
 require (
 	github.com/UNO-SOFT/zlog v0.8.6
@@ -14,6 +14,7 @@ require (
 
 require (
 	github.com/dgryski/go-linebreak v0.0.0-20180812204043-d8f37254e7d3 // indirect
+	github.com/go-json-experiment/json v0.0.0-20260505212615-e40f80bf6836 // indirect
 	github.com/go-logr/logr v1.4.2 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect

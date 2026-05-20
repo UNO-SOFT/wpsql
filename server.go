@@ -9,7 +9,6 @@ import (
 	"database/sql/driver"
 	"encoding/base64"
 	"encoding/csv"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -27,7 +26,7 @@ import (
 	"github.com/tgulacsi/go/text"
 	"github.com/timewasted/go-accept-headers"
 
-	//"github.com/UNO-SOFT/zlog/v2"
+	"github.com/go-json-experiment/json"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -46,7 +45,9 @@ func newServer(databases []string, aliases map[string]string, restEP string) ser
 		restEP = DefaultRestEP
 	}
 	srv.mux.Handle(restEP, http.StripPrefix(restEP, &rest))
+	srv.mux.HandleFunc("GET /{db}/issues/{id}", srv.getIssue)
 	srv.mux.HandleFunc("GET /{db}/issues/{id}/summary", srv.getIssueSummary)
+	srv.mux.HandleFunc("GET /{db}/issues/{id}/celverzio", srv.getIssueCelverzio)
 	srv.mux.HandleFunc("GET /{db}/issues/{id}/objektumok", srv.putIssueObjektumok)
 	srv.mux.HandleFunc("PUT /{db}/issues/{id}/objektumok", srv.putIssueObjektumok)
 	srv.mux.HandleFunc("/", srv.queryHandler)
@@ -65,7 +66,39 @@ func (srv server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	srv.mux.ServeHTTP(w, r)
 }
 
-func (srv server) getIssueSummary(w http.ResponseWriter, r *http.Request) {
+type Issue struct {
+	ID, ProjectID, ReportedID, HandlerID, DuplicateID int32
+	Priority, Severity, Reproducibility, Status       int32
+	Resolution, Projection, ETA                       int32
+	Submitted, Due, Updated                           time.Time
+	Summary                                           string
+	Version, FixedInVersion, TargetVersion            string
+}
+
+func (srv server) issue(ctx context.Context, conn *pgxpool.Conn, ID string) (Issue, error) {
+	const qry = `SELECT id, project_id, reporter_id, handler_id, duplicate_id,
+		priority, severity, reproducibility, status, resolution, projection, eta,
+		date_submitted, due_date, last_updated,
+		summary,
+		version, fixed_in_version, target_version
+		 FROM mantis_bug_table WHERE id = $1::int`
+	var I Issue
+	var submitted, due, updated int64
+	if err := conn.QueryRow(ctx, qry, ID).Scan(
+		&I.ID, &I.ProjectID, &I.ReportedID, &I.HandlerID, &I.DuplicateID,
+		&I.Priority, &I.Severity, &I.Reproducibility, &I.Status,
+		&I.Resolution, &I.Projection, &I.ETA,
+		&submitted, &due, &updated,
+		&I.Summary,
+		&I.Version, &I.FixedInVersion, &I.TargetVersion,
+	); err != nil {
+		return I, fmt.Errorf("%s [%q]: %w", qry, ID, err)
+	}
+	I.Submitted, I.Due, I.Updated = I2T(submitted), I2T(due), I2T(updated)
+	return I, nil
+}
+
+func (srv server) doGetIssue(w http.ResponseWriter, r *http.Request, do func(http.ResponseWriter, Issue)) {
 	db := srv.remapDBName(r.PathValue("db"))
 	ctx := r.Context()
 	conn, err := connect(ctx, db)
@@ -74,14 +107,37 @@ func (srv server) getIssueSummary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer conn.Release()
-	const qry = `SELECT summary FROM mantis_bug_table WHERE id = $1::int`
-	var summary string
-	if err = conn.QueryRow(ctx, qry, r.PathValue("id")).Scan(&summary); err != nil {
-		http.Error(w, fmt.Sprintf("%s: %+v", qry, err), http.StatusInternalServerError)
+	issue, err := srv.issue(ctx, conn, r.PathValue("id"))
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, pgx.ErrNoRows) {
+			status = http.StatusNotFound
+		}
+		http.Error(w, err.Error(), status)
 		return
 	}
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	io.WriteString(w, summary)
+	do(w, issue)
+}
+
+func (srv server) getIssue(w http.ResponseWriter, r *http.Request) {
+	srv.doGetIssue(w, r, func(w http.ResponseWriter, issue Issue) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.MarshalWrite(w, issue)
+	})
+}
+
+func (srv server) getIssueCelverzio(w http.ResponseWriter, r *http.Request) {
+	srv.doGetIssue(w, r, func(w http.ResponseWriter, issue Issue) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		io.WriteString(w, issue.TargetVersion)
+	})
+}
+
+func (srv server) getIssueSummary(w http.ResponseWriter, r *http.Request) {
+	srv.doGetIssue(w, r, func(w http.ResponseWriter, issue Issue) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		io.WriteString(w, issue.Summary)
+	})
 }
 
 func (srv server) putIssueObjektumok(w http.ResponseWriter, r *http.Request) {
@@ -562,15 +618,15 @@ func (rp requestConfig) writeRows(w io.Writer, rows pgx.Rows, fn string) error {
 		}
 
 	case CodecCBOR, CodecJSON:
-		var enc interface{ Encode(any) error }
+		var enc func(any) error
 		switch rp.Codec {
 		case CodecCBOR:
-			enc = cbor.NewEncoder(w)
+			enc = cbor.NewEncoder(w).Encode
 		case CodecJSON:
-			enc = json.NewEncoder(w)
+			enc = func(v any) error { return json.MarshalWrite(w, v) }
 		}
 		if rp.Head {
-			if err := enc.Encode(cols); err != nil {
+			if err := enc(cols); err != nil {
 				return err
 			}
 		}
@@ -621,7 +677,7 @@ func (rp requestConfig) writeRows(w io.Writer, rows pgx.Rows, fn string) error {
 			return nil
 		}
 		writeRow = func() error {
-			if err := enc.Encode(row); err != nil {
+			if err := enc(row); err != nil {
 				return fmt.Errorf("encode %v: %w", row, err)
 			}
 			return nil
@@ -784,4 +840,11 @@ func (p pgxLogger) Log(ctx context.Context, level tracelog.LogLevel, msg string,
 		keyvals = append(keyvals, k, v)
 	}
 	p.Logger.Log(ctx, slog.Level(3-level), msg, keyvals...)
+}
+
+func I2T(sec int64) time.Time {
+	if sec == 0 {
+		return time.Time{}
+	}
+	return time.Unix(sec, 0)
 }
