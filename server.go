@@ -145,7 +145,15 @@ func (srv server) putIssueObjektumok(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	var text string
 	if r.Method == "GET" {
-		text = r.URL.Query().Get("text")
+		if text = r.URL.Query().Get("text"); text == "" {
+			b64 := r.URL.Query().Get("text_b64")
+			b, err := base64.StdEncoding.DecodeString(b64)
+			if err != nil {
+				http.Error(w, fmt.Sprintf("decode text_b64=%s: %+v", b64, err), http.StatusBadRequest)
+				return
+			}
+			text = string(b)
+		}
 	} else {
 		var buf strings.Builder
 		if _, err := io.Copy(&buf, r.Body); err != nil {
