@@ -1,6 +1,6 @@
 // Copyright 2021, 2022 Tamás Gulácsi. All rights reserved.
 //
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: EUPL-1.2
 
 package main
 
@@ -148,7 +148,7 @@ func (srv server) putIssueObjektumok(w http.ResponseWriter, r *http.Request) {
 		if text = r.URL.Query().Get("text"); text == "" {
 			b64 := r.URL.Query().Get("text_b64")
 			b, err := base64.StdEncoding.DecodeString(b64)
-			if err != nil {
+			if err != nil || len(b) == 0 {
 				http.Error(w, fmt.Sprintf("decode text_b64=%s: %+v", b64, err), http.StatusBadRequest)
 				return
 			}
