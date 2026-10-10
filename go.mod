@@ -9,7 +9,6 @@ require (
 	github.com/fxamacker/cbor/v2 v2.9.6
 	github.com/go-json-experiment/json v0.0.0-20260820222146-c27c302e5fc3
 	github.com/jackc/pgx/v5 v5.11.0
-	github.com/peterbourgon/ff/v4 v4.0.0-beta.1
 	github.com/tgulacsi/go v0.30.0
 	github.com/timewasted/go-accept-headers v0.0.0-20130320203746-c78f304b1b09
 )
