@@ -21,8 +21,8 @@ import (
 	"github.com/UNO-SOFT/wpsql/client"
 	"github.com/UNO-SOFT/zlog/v2"
 
-	"github.com/peterbourgon/ff/v4"
-	"github.com/peterbourgon/ff/v4/ffhelp"
+	"flag"
+	"github.com/UNO-SOFT/cli"
 	"github.com/tgulacsi/go/handler"
 	"github.com/tgulacsi/go/httpunix"
 )
@@ -51,23 +51,23 @@ func Main() error {
 		basicAuth, restEP       string
 		pqSSL                   bool
 	)
-	commonFS := ff.NewFlagSet("common")
-	commonFS.StringVar(&basicAuth, 0, "basic-auth", "", "HTTP Basic authentication (user:passw)")
-	commonFS.Value('v', "verbose", &verbose, "verbosity")
+	commonFS := flag.NewFlagSet("common", flag.ContinueOnError)
+	commonFS.StringVar(&basicAuth, "basic-auth", "", "HTTP Basic authentication (user:passw)")
+	commonFS.Var(&verbose, "verbose", "verbosity")
 
-	FS := ff.NewFlagSet("serve")
-	FS.SetParent(commonFS)
-	FS.StringVar(&pqUser, 0, "db-user", "mantis", "username to connect with")
-	FS.BoolVar(&pqSSL, 0, "db-ssl", "use ssl when connecting to DB?")
-	FS.StringVar(&pqPwEnv, 0, "pwenv", "PGPASSW", "name of the environment variable of the user password")
-	FS.StringVar(&pqHost, 0, "db-host", "127.0.0.1", "database host")
-	FS.StringVar(&pqUpdSecretEnv, 0, "update-secret-env", "UPDATE_SECRET", "name of the environment variable of the secret to update requests")
-	flagHTTP := FS.StringLong("http", "0.0.0.0:45432", "address to listen on")
-	flagDatabases := FS.StringLong("databases", "", "a comma-separated list of databases to offer")
-	FS.StringVar(&restEP, 0, "rest-endpoint", DefaultRestEP, "REST endpoint")
-	flagAliases := FS.StringLong("aliases", "", "alias=db,alias2=db")
-	serveCmd := ff.Command{Name: "serve", Flags: FS,
-		Exec: func(ctx context.Context, args []string) error {
+	FS := flag.NewFlagSet("serve", flag.ContinueOnError)
+	// FS.SetParent(commonFS)
+	FS.StringVar(&pqUser, "db-user", "mantis", "username to connect with")
+	FS.BoolVar(&pqSSL, "db-ssl", false, "use ssl when connecting to DB?")
+	FS.StringVar(&pqPwEnv, "pwenv", "PGPASSW", "name of the environment variable of the user password")
+	FS.StringVar(&pqHost, "db-host", "127.0.0.1", "database host")
+	FS.StringVar(&pqUpdSecretEnv, "update-secret-env", "UPDATE_SECRET", "name of the environment variable of the secret to update requests")
+	flagHTTP := FS.String("http", "0.0.0.0:45432", "address to listen on")
+	flagDatabases := FS.String("databases", "", "a comma-separated list of databases to offer")
+	FS.StringVar(&restEP, "rest-endpoint", DefaultRestEP, "REST endpoint")
+	flagAliases := FS.String("aliases", "", "alias=db,alias2=db")
+	serveCmd := cli.Command{Name: "serve", Flags: FS,
+		Exec: func(ctx context.Context, state *cli.State) error {
 			var databases []string
 			for nm := range strings.SplitSeq(*flagDatabases, ",") {
 				if nm != "" {
@@ -124,12 +124,13 @@ func Main() error {
 			m.DB = "mantis_" + x + "_prd"
 		}
 	}
-	FS = ff.NewFlagSet("client")
-	FS.SetParent(commonFS)
-	FS.StringVar(&m.URL, 0, "server", "http://lnx-web-uno.unosoft.dmz:45432", "address of the wpsql server")
-	FS.StringVar(&m.DB, 0, "db", m.DB, "database")
-	clientCmd := ff.Command{Name: "client", Flags: FS,
-		Exec: func(ctx context.Context, args []string) error {
+	FS = flag.NewFlagSet("client", flag.ContinueOnError)
+	// FS.SetParent(commonFS)
+	FS.StringVar(&m.URL, "server", "http://lnx-web-uno.unosoft.dmz:45432", "address of the wpsql server")
+	FS.StringVar(&m.DB, "db", m.DB, "database")
+	clientCmd := cli.Command{Name: "client", Flags: FS,
+		Exec: func(ctx context.Context, state *cli.State) error {
+			args := state.Args
 			if verbose != 0 {
 				m.Logger = logger
 			}
@@ -154,19 +155,19 @@ func Main() error {
 		},
 	}
 
-	FS = ff.NewFlagSet("wpsql")
-	FS.SetParent(commonFS)
+	FS = flag.NewFlagSet("wpsql", flag.ContinueOnError)
+	// FS.SetParent(commonFS)
 
-	app := ff.Command{Name: "wpsql", Flags: FS,
-		Exec: func(ctx context.Context, args []string) error {
-			return serveCmd.Exec(ctx, args)
+	app := cli.Command{Name: "wpsql", Flags: FS,
+		Exec: func(ctx context.Context, state *cli.State) error {
+			return serveCmd.Exec(ctx, state)
 		},
-		Subcommands: []*ff.Command{&serveCmd, &clientCmd},
+		SubCommands: []*cli.Command{&serveCmd, &clientCmd},
 	}
 
-	if err := app.Parse(os.Args[1:], ff.WithEnvVarPrefix("WPSQL")); err != nil {
-		ffhelp.Command(&app).WriteTo(os.Stderr)
-		if errors.Is(err, ff.ErrHelp) {
+	if err := cli.Parse(&app, os.Args[1:]); err != nil {
+		cli.PrintHelp(os.Stderr, &app)
+		if errors.Is(err, flag.ErrHelp) {
 			return nil
 		}
 		return err
@@ -184,7 +185,7 @@ func Main() error {
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
-	return app.Run(ctx)
+	return cli.Run(ctx, &app, nil)
 }
 
 var _ = io.Closer((closerFunc)(nil))
